@@ -6,10 +6,15 @@ interface
 
 uses
   windows, LCLIntf, Messages, SysUtils, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, ExtCtrls, LResources, CEFuncProc, commonTypeDefs;
+  Dialogs, StdCtrls, ExtCtrls, LResources, Menus, CEFuncProc, commonTypeDefs;
 
 type
+
+  { TframeHotkeyConfig }
+
   TframeHotkeyConfig = class(TFrame)
+    cbStopOnRelease: TCheckBox;
+    MenuItem1: TMenuItem;
     Panel1: TPanel;
     Label1: TLabel;
     ListBox1: TListBox;
@@ -28,10 +33,16 @@ type
     edtHotkeyDelay: TEdit;
     Label4: TLabel;
     Label5: TLabel;
+    PopupMenu1: TPopupMenu;
+    procedure Edit1MouseDown(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure edtSHSpeedChange(Sender: TObject);
     procedure ListBox1Click(Sender: TObject);
     procedure Edit1KeyDown(Sender: TObject; var Key: Word;
       Shift: TShiftState);
     procedure Button3Click(Sender: TObject);
+    procedure ListBox1SelectionChange(Sender: TObject; User: boolean);
+    procedure MenuItem1Click(Sender: TObject);
   private
     { Private declarations }
     currentspeed: integer;
@@ -47,7 +58,7 @@ type
     newspeedhackspeed4: tspeedhackspeed;
     newspeedhackspeed5: tspeedhackspeed;
     speedupdelta:       single;
-    slowdowndelta:      single;    
+    slowdowndelta:      single;
   end;
 
 implementation
@@ -72,22 +83,32 @@ begin
     if currentspeed=1 then
     begin
       newspeedhackspeed1.speed:=StrToFloat(edtSHspeed.Text);
+      newspeedhackspeed1.disablewhenreleased:=cbStopOnRelease.checked;
+      newspeedhackspeed1.keycombo:=newhotkeys[currentspeed+2];
     end else
     if currentspeed=2 then
     begin
       newspeedhackspeed2.speed:=StrToFloat(edtSHspeed.Text);
+      newspeedhackspeed2.disablewhenreleased:=cbStopOnRelease.checked;
+      newspeedhackspeed2.keycombo:=newhotkeys[currentspeed+2];
     end else
     if currentspeed=3 then
     begin
       newspeedhackspeed3.speed:=StrToFloat(edtSHspeed.Text);
+      newspeedhackspeed3.disablewhenreleased:=cbStopOnRelease.checked;
+      newspeedhackspeed3.keycombo:=newhotkeys[currentspeed+2];
     end else
     if currentspeed=4 then
     begin
       newspeedhackspeed4.speed:=StrToFloat(edtSHspeed.Text);
+      newspeedhackspeed4.disablewhenreleased:=cbStopOnRelease.checked;
+      newspeedhackspeed4.keycombo:=newhotkeys[currentspeed+2];
     end else
     if currentspeed=5 then
     begin
       newspeedhackspeed5.speed:=StrToFloat(edtSHspeed.Text);
+      newspeedhackspeed5.disablewhenreleased:=cbStopOnRelease.checked;
+      newspeedhackspeed5.keycombo:=newhotkeys[currentspeed+2];
     end;
   end;
 
@@ -97,27 +118,32 @@ begin
     case currentspeed of
       1:
       begin
-        edtSHSpeed.text:=format('%.2f',[newspeedhackspeed1.speed]);
+        edtSHSpeed.text:=format('%.3f',[newspeedhackspeed1.speed]);
+        cbStopOnRelease.checked:=newspeedhackspeed1.disablewhenreleased;
       end;
 
       2:
       begin
-        edtSHSpeed.text:=format('%.2f',[newspeedhackspeed2.speed]);
+        edtSHSpeed.text:=format('%.3f',[newspeedhackspeed2.speed]);
+        cbStopOnRelease.checked:=newspeedhackspeed2.disablewhenreleased;
       end;
 
       3:
       begin
-        edtSHSpeed.text:=format('%.2f',[newspeedhackspeed3.speed]);
+        edtSHSpeed.text:=format('%.3f',[newspeedhackspeed3.speed]);
+        cbStopOnRelease.checked:=newspeedhackspeed3.disablewhenreleased;
       end;
 
       4:
       begin
-        edtSHSpeed.text:=format('%.2f',[newspeedhackspeed4.speed]);
+        edtSHSpeed.text:=format('%.3f',[newspeedhackspeed4.speed]);
+        cbStopOnRelease.checked:=newspeedhackspeed4.disablewhenreleased;
       end;
 
       5:
       begin
-        edtSHSpeed.text:=format('%.2f',[newspeedhackspeed5.speed]);
+        edtSHSpeed.text:=format('%.3f',[newspeedhackspeed5.speed]);
+        cbStopOnRelease.checked:=newspeedhackspeed5.disablewhenreleased;
       end;
     end;
 
@@ -130,9 +156,9 @@ begin
   begin
     increasespeed:=listbox1.itemindex=8;
     if increasespeed then
-      edit4.Text:=format('%.2f',[speedupdelta])
+      edit4.Text:=format('%.3f',[speedupdelta])
     else
-      edit4.Text:=format('%.2f',[slowdowndelta]);
+      edit4.Text:=format('%.3f',[slowdowndelta]);
 
     panel4.visible:=true;
     panel3.Visible:=false;
@@ -143,12 +169,33 @@ end;
 procedure TFrameHotkeyConfig.updatehotkey;
 begin
   edit1.Text:=ConvertKeyComboToString(newhotkeys[listbox1.ItemIndex]);
-  updatespeed;  
+  updatespeed;
+
 end;
 
 procedure TframeHotkeyConfig.ListBox1Click(Sender: TObject);
 begin
   updatehotkey;
+end;
+
+procedure TframeHotkeyConfig.edtSHSpeedChange(Sender: TObject);
+begin
+
+end;
+
+procedure TframeHotkeyConfig.Edit1MouseDown(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+var key: word;
+begin
+  key:=0;
+  case button of
+    mbMiddle: key:=VK_MBUTTON;
+    mbExtra1: key:=VK_XBUTTON1;
+    mbExtra2: key:=VK_XBUTTON2;
+  end;
+
+  if key<>0 then
+    Edit1KeyDown(edit1, key, shift);
 end;
 
 procedure TframeHotkeyConfig.Edit1KeyDown(Sender: TObject; var Key: Word;
@@ -180,6 +227,22 @@ begin
     edit1.Text:=ConvertKeyComboToString(newhotkeys[listbox1.ItemIndex]);
     edit1.SetFocus;
   end;
+end;
+
+procedure TframeHotkeyConfig.ListBox1SelectionChange(Sender: TObject;
+  User: boolean);
+begin
+  if user then
+    updatehotkey;
+end;
+
+procedure TframeHotkeyConfig.MenuItem1Click(Sender: TObject);
+var i: integer;
+begin
+  for i:=0 to 30 do
+    newhotkeys[i][0]:=0;
+
+  updatehotkey;
 end;
 
 initialization

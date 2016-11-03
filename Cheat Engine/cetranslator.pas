@@ -65,7 +65,9 @@ type
   end;
 
 
-var translationfilepath: string;
+var
+  translationfilepath: string;
+  currentTranslation: string;
 
 procedure doTranslation;
 
@@ -122,6 +124,7 @@ begin
       lini:=TIniFile.Create(cheatenginedir+'languages' + DirectorySeparator+'language.ini');
       try
         lang:=lini.ReadString('Language','PreferedLanguage','');
+        if lang='*' then exit('');
       finally
         lini.Free;
       end;
@@ -272,7 +275,10 @@ begin
   try
      lcfn := FindLocaleFileName('.po');
 
+     if lcfn='' then exit;
+
      translationfilepath:=ExtractFilePath(lcfn);
+     currentTranslation:=ExtractFileName(ExtractFileDir(translationfilepath));
 
      lcfn:=SysToUTF8(lcfn);
 
@@ -298,6 +304,11 @@ begin
     // try now with MO traslation resources
     try
       lcfn := FindLocaleFileName('.mo');
+      translationfilepath:=ExtractFilePath(lcfn);
+      currentTranslation:=ExtractFileName(translationfilepath);
+
+      lcfn:=SysToUTF8(lcfn);
+
       if lcfn <> '' then
       begin
         GetText.TranslateResourceStrings(UTF8ToSys(lcfn));
@@ -318,7 +329,12 @@ begin
   end;
 
   if LocalTranslator<>nil then
-    LRSTranslator := LocalTranslator;
+    LRSTranslator := LocalTranslator
+  else
+  begin
+    if assigned(LRSTranslator) then
+      freeandnil(LRSTranslator);
+  end;
 end;
 
 

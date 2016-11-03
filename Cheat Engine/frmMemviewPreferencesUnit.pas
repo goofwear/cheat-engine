@@ -24,6 +24,7 @@ type
     GroupBox1: TGroupBox;
     Label1: TLabel;
     Label2: TLabel;
+    lblHexExample: TLabel;
     lblRegister: TLabel;
     lblNormal: TLabel;
     lblSymbol: TLabel;
@@ -65,30 +66,55 @@ resourcestring
   rsRegisterColor = 'Register color';
   rsSymbolColor = 'Symbol color';
 
+  rsDCNormal='Normal';
+  rsDCHighlighted='Highlighted';
+  rsDCHighlightedSecondary='Highlighted secondary';
+  rsDCBreakpoint='Breakpoint';
+  rsDCHighlightedBreakpoint='Highlighted breakpoint';
+  rsDCHighlightedBreakpointSecondary='Highlighted breakpoint secondary';
+  rsDCUltimap2='Ultimap2';
+  rsDCHighlightedUltimap2='Highlighted Ultimap2';
+  rsDCHighlightedUltimap2Secondary='Highlighted Ultimap2 secondary';
+
 procedure TfrmMemviewPreferences.applyfont;
 begin
-  lblNormal.font.Name:=fontdialog1.Font.Name;
-  lblnormal.Font.Size:=fontdialog1.font.Size;
+  cbColorGroupChange(cbColorGroup); //save the current colors
 
-  lblRegister.font.Name:=fontdialog1.Font.Name;
-  lblRegister.font.size:=fontdialog1.Font.size;
+  lblNormal.font:=fontdialog1.Font;
+  lblRegister.font:=fontdialog1.Font;
+  lblSymbol.font:=fontdialog1.Font;
+  lblHex.font:=FontDialog1.font;
 
-  lblSymbol.font.name:=fontdialog1.Font.Name;
-  lblSymbol.font.size:=fontdialog1.Font.size;
+  lblHexExample.Font:=fontdialog2.font;
 
-  lblregister.Top:=lblNormal.top+lblNormal.height+2;
-  lblSymbol.Top:=lblregister.top+lblregister.height+2;
-  lblHex.top:=lblSymbol.top+lblregister.height+2;
+  oldstate:=csUndefined;
+  cbColorGroupChange(cbColorGroup); //restore the colors
+
+  DoAutoSize;
 end;
 
 procedure TfrmMemviewPreferences.FormCreate(Sender: TObject);
 begin
   oldstate:=csUndefined;
+  cbColorGroup.Items.Clear;
+
+  cbColorGroup.Items.Add(rsDCNormal);
+  cbColorGroup.Items.Add(rsDCHighlighted);
+  cbColorGroup.Items.Add(rsDCHighlightedSecondary);
+  cbColorGroup.Items.Add(rsDCBreakpoint);
+  cbColorGroup.Items.Add(rsDCHighlightedBreakpoint);
+  cbColorGroup.Items.Add(rsDCHighlightedBreakpointSecondary);
+  cbColorGroup.Items.Add(rsDCUltimap2);
+  cbColorGroup.Items.Add(rsDCHighlightedUltimap2);
+  cbColorGroup.Items.Add(rsDCHighlightedUltimap2Secondary);
 end;
 
 procedure TfrmMemviewPreferences.FormShow(Sender: TObject);
 begin
   applyfont;
+
+  oldstate:=csUndefined;
+  cbColorGroupChange(cbColorGroup);
 end;
 
 procedure TfrmMemviewPreferences.GroupBox1Click(Sender: TObject);
@@ -156,28 +182,44 @@ begin
   fontdialog2.font.Color:=clwindowText;
   fontdialog2.font.Height:=-11;
   fontdialog2.font.Size:=10;
-  fontdialog2.font.Name:='Courier';
+  fontdialog2.font.Name:='Courier New';
   fontdialog2.font.Style:=[];
 
 
 
 
   applyfont;
+  oldstate:=csUndefined;
+  cbColorGroupChange(cbColorGroup);
 end;
 
 procedure TfrmMemviewPreferences.btnFontClick(Sender: TObject);
+var s: string;
+  f:tfont;
+  fd: TFontData;
 begin
+  fd:=Graphics.GetFontData(lblNormal.Font.Handle);
+  fd.Handle:=fontdialog1.Font.Handle;
+  fontdialog1.Font.FontData:=fd;
+
   if fontdialog1.execute then
   begin
     btnFont.Caption:=fontdialog1.Font.Name+' '+inttostr(fontdialog1.Font.Size);
+    oldstate:=csUndefined;
     applyfont;
+
+    cbColorGroupChange(cbColorGroup);
   end;
 end;
 
 procedure TfrmMemviewPreferences.btnHexFontClick(Sender: TObject);
+var fd: TFontData;
 begin
   if fontdialog2.execute then
+  begin
     btnHexFont.Caption:=fontdialog2.Font.Name+' '+inttostr(fontdialog2.Font.Size);
+    applyfont;
+  end;
 end;
 
 procedure TfrmMemviewPreferences.Button2Click(Sender: TObject);
@@ -200,11 +242,14 @@ begin
 
   //load the new state
   oldstate:=TDisassemblerViewColorsState(cbColorGroup.ItemIndex);
-  groupbox1.Color:=colors[oldstate].backgroundcolor;
-  lblnormal.font.color:=colors[oldstate].normalcolor;
-  lblRegister.font.color:=colors[oldstate].registercolor;
-  lblSymbol.font.color:=colors[oldstate].symbolcolor;
-  lblHex.Font.color:=colors[oldstate].hexcolor;
+  if oldstate<>csUndefined then
+  begin
+    groupbox1.Color:=colors[oldstate].backgroundcolor;
+    lblnormal.font.color:=colors[oldstate].normalcolor;
+    lblRegister.font.color:=colors[oldstate].registercolor;
+    lblSymbol.font.color:=colors[oldstate].symbolcolor;
+    lblHex.Font.color:=colors[oldstate].hexcolor;
+  end;
 end;
 
 initialization

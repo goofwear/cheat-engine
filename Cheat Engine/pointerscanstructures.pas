@@ -9,7 +9,7 @@ uses
 
 const
   MAXQUEUESIZE=64;
-  pointerscanfileversion=1;
+  pointerscanfileversion=2;
 
 type
   TDynDwordArray=array of dword;
@@ -65,6 +65,7 @@ type
     port: word;
     childid: integer;
     trusted: boolean;
+    takePathsAndDisconnect: boolean;
     terminating: boolean;
 
     idle: boolean;

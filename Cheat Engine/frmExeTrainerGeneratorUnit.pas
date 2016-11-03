@@ -7,7 +7,7 @@ interface
 uses
   windows, Classes, SysUtils, FileUtil, LResources, Forms, Controls, Graphics,
   ExtCtrls, dialogs, StdCtrls, ComCtrls, Menus, cefuncproc, IconStuff, zstream,
-  registry, MainUnit2, symbolhandler;
+  registry, MainUnit2, symbolhandler, lua, lualib, lauxlib;
 
 
 type
@@ -63,6 +63,7 @@ type
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure FormCloseQuery(Sender: TObject; var CanClose: boolean);
     procedure FormCreate(Sender: TObject);
+    procedure FormShow(Sender: TObject);
     procedure ListView1ContextPopup(Sender: TObject; MousePos: TPoint; var Handled: Boolean);
     procedure ListView1SelectItem(Sender: TObject; Item: TListItem; Selected: Boolean);
     procedure miEditFolderClick(Sender: TObject);
@@ -86,15 +87,22 @@ type
 var
   frmExeTrainerGenerator: TfrmExeTrainerGenerator;
 
+  exeTrainerFeatures: array of record
+    featurename: string;
+    functionid: integer;
+    cb: TCheckBox;
+  end;
+
 implementation
 
 { TfrmExeTrainerGenerator }
 
-uses MainUnit,ceguicomponents, opensave, Globals;
+uses MainUnit,ceguicomponents, opensave, Globals, LuaHandler;
 
 resourcestring
   rsSaving = 'Saving...';
   rsGenerate = 'Generate';
+  rsupdateFailed='Failure updating the trainer resource information: %d';
   rsFailureOnWriting = 'failure on writing';
   rsIconUpdateError = 'icon update error';
   rsFailureOpeningTheTrainerForResourceUpdates = 'Failure opening the trainer '
@@ -107,7 +115,11 @@ resourcestring
   rsMax = 'Max';
   rsNewFoldername = 'New foldername';
   rsCETrainerMaker = 'CE trainer maker';
-
+  rsARCHIVE = ' ARCHIVE:';
+  rsDECOMPRESSOR = ' DECOMPRESSOR:';
+  rsInvalidIcon = '(Invalid icon)';
+  rsInvalidIconType = '(Invalid icon type)';
+  
 procedure TfrmExeTrainerGenerator.FormActivate(Sender: TObject);
 begin
 
@@ -189,11 +201,14 @@ var DECOMPRESSOR: TMemorystream;
   gii: PGRPICONDIR absolute ii;
 
   compression: Tcompressionlevel;
-  i: integer;
+  i,j,t,t2,ltop: integer;
 
   tiny: boolean;
 
   basefile: string;
+
+  filepath: string;
+  relpath: string;
 
 begin
 
@@ -284,7 +299,11 @@ begin
               addfile(cheatenginedir+'vehdebug-i386.dll');
 
             if cbKernelDebug.checked then
+            begin
               addfile(cheatenginedir+'dbk32.sys');
+              addfile(cheatenginedir+'dbk64.sys');
+              addfile(cheatenginedir+'cheatengine-i386.exe.sig');
+            end;
 
             if cbModPlayer.checked then
               addfile(cheatenginedir+'libmikmod32.dll');
@@ -302,7 +321,10 @@ begin
               addfile(cheatenginedir+'vehdebug-x86_64.dll');
 
             if cbKernelDebug.checked then
+            begin
               addfile(cheatenginedir+'dbk64.sys');
+              addfile(cheatenginedir+'cheatengine-x86_64.exe.sig');
+            end;
 
             if cbModPlayer.checked then
               addfile(cheatenginedir+'libmikmod64.dll');
@@ -334,6 +356,60 @@ begin
             end;
           end;
 
+          //do the exe trainer features
+          for i:=0 to length(exeTrainerFeatures)-1 do
+            if (exeTrainerFeatures[i].cb<>nil) and exeTrainerFeatures[i].cb.checked then
+            begin
+              luacs.enter;
+              try
+                ltop:=lua_gettop(luavm);
+                lua_rawgeti(luavm, LUA_REGISTRYINDEX, exeTrainerFeatures[i].functionid) ;
+                if lua_pcall(luavm, 0,1,0)=0 then
+                begin
+                  if lua_istable(luavm,-1) then
+                  begin
+                    t:=lua_gettop(luavm);
+                    for j:=1 to lua_objlen(luavm, t) do
+                    begin
+                      lua_pushinteger(luavm, j);
+                      lua_gettable(luavm, t);
+                      if lua_istable(luavm, -1) then
+                      begin
+                        t2:=lua_gettop(Luavm);
+                        lua_pushstring(Luavm,'PathToFile');
+                        lua_gettable(Luavm, t2);
+                        if lua_isstring(Luavm, -1) then
+                          filepath:=Lua_ToString(LuaVM,-1)
+                        else
+                          filepath:='';
+
+                        lua_pop(luavm,1);
+
+                        if filepath<>'' then
+                        begin
+                          lua_pushstring(Luavm,'RelativePath');
+                          lua_gettable(Luavm, t2);
+                          if lua_isstring(Luavm, -1) then
+                            relpath:=Lua_ToString(LuaVM,-1)
+                          else
+                            relpath:='';
+
+                          lua_pop(luavm,1);
+
+                          addFile(filepath,relpath);
+                        end;
+
+                      end;
+                      lua_pop(luavm,1);
+                    end;
+                  end;
+                end;
+
+              finally
+                lua_settop(luavm,ltop);
+              end;
+            end;
+
           archive.free;
 
           pinteger(_archive.Memory)^:=filecount;  //fill in the count (uncompressed)
@@ -346,57 +422,63 @@ begin
 
         {_Archive.SaveToFile('c:\bla.dat');}
 
-        if not UpdateResourceA(updatehandle, RT_RCDATA, 'ARCHIVE', 0, _archive.memory, _archive.size) then
-          raise exception.create(rsFailureOnWriting+' ARCHIVE:'+inttostr(
-            getlasterror()));
-
-        if not tiny then
-        begin
-          //tiny has no decompressor
-          if not UpdateResourceA(updatehandle, RT_RCDATA, 'DECOMPRESSOR', 0, decompressor.memory, decompressor.size) then
-            raise exception.create(rsFailureOnWriting+' DECOMPRESSOR:'+inttostr(
-              getlasterror()));
-        end;
-
-        icon:=tmemorystream.create;
         try
-          image1.picture.icon.SaveToStream(icon);
-         // sizeof(TBitmapInfoHeader)
 
-          //GetIconInfo();
+          if not UpdateResourceA(updatehandle, RT_RCDATA, 'ARCHIVE', 0, _archive.memory, _archive.size) then
+            raise exception.create(rsFailureOnWriting+rsARCHIVE+inttostr(
+              getlasterror()));
 
-          z:=TIcon.create;
-         // z.LoadFromFile('F:\svn\favicon.ico');
-          //z.SaveToStream(icon);
-
-          ii:=icon.memory;
-
-          if ii.idType=1 then
+          if not tiny then
           begin
-            if ii.idCount>0 then
-            begin
-              //update the icon
-              if not updateResourceA(updatehandle,pchar(RT_ICON),MAKEINTRESOURCE(1),1033, pointer(ptruint(icon.Memory)+ii.icondirentry[0].dwImageOffset), ii.icondirentry[0].dwBytesInRes) then
-                raise exception.create(rsIconUpdateError+' 2');
-
-              //update the group
-              gii.idCount:=1;
-              gii.icondirentry[0].id:=1;
-              if not updateResourceA(updatehandle,pchar(RT_GROUP_ICON),MAKEINTRESOURCE(101),1033, gii, sizeof(TGRPICONDIR)+sizeof(TGRPICONDIRENTRY)) then
-                raise exception.create(rsIconUpdateError+' 3');
-
-
-            end;
+            //tiny has no decompressor
+            if not UpdateResourceA(updatehandle, RT_RCDATA, 'DECOMPRESSOR', 0, decompressor.memory, decompressor.size) then
+              raise exception.create(rsFailureOnWriting+rsDECOMPRESSOR+inttostr(
+                getlasterror()));
           end;
+
+          icon:=tmemorystream.create;
+          try
+            image1.picture.icon.SaveToStream(icon);
+           // sizeof(TBitmapInfoHeader)
+
+            //GetIconInfo();
+
+            z:=TIcon.create;
+           // z.LoadFromFile('F:\svn\favicon.ico');
+            //z.SaveToStream(icon);
+
+            ii:=icon.memory;
+
+            if ii.idType=1 then
+            begin
+              if ii.idCount>0 then
+              begin
+                //update the icon
+                if not updateResourceA(updatehandle,pchar(RT_ICON),MAKEINTRESOURCE(1),1033, pointer(ptruint(icon.Memory)+ii.icondirentry[0].dwImageOffset), ii.icondirentry[0].dwBytesInRes) then
+                  raise exception.create(rsIconUpdateError+' 2');
+
+                //update the group
+                gii.idCount:=1;
+                gii.icondirentry[0].id:=1;
+                if not updateResourceA(updatehandle,pchar(RT_GROUP_ICON),MAKEINTRESOURCE(101),1033, gii, sizeof(TGRPICONDIR)+sizeof(TGRPICONDIRENTRY)) then
+                  raise exception.create(rsIconUpdateError+' 3');
+
+
+              end
+              else
+                raise exception.create(rsIconUpdateError+' 4 '+rsInvalidIcon);
+            end
+            else
+              raise exception.create(rsIconUpdateError+' 5 '+rsInvalidIconType);
+          finally
+            icon.free;
+
+          end;
+
         finally
-          icon.free;
-
+          if EndUpdateResource(updatehandle, false)=false then
+            raise exception.create(format(rsUpdateFailed,[getLastError]));
         end;
-
-
-
-
-        EndUpdateResource(updatehandle, false);
       end else raise exception.create(
         rsFailureOpeningTheTrainerForResourceUpdates);
     end;
@@ -532,6 +614,10 @@ begin
 
   for i:=0 to ListView1.Items.Count-1 do
     TFiledata(listview1.items[i].Data).free;
+
+  for i:=0 to length(exeTrainerFeatures)-1 do
+    if exeTrainerFeatures[i].cb<>nil then
+      freeandnil(exeTrainerFeatures[i].cb);
 end;
 
 procedure TfrmExeTrainerGenerator.FormCloseQuery(Sender: TObject;
@@ -579,6 +665,24 @@ begin
       break;
     end;
 
+  for i:=0 to length(exeTrainerFeatures)-1 do
+    if exeTrainerFeatures[i].featurename<>'' then
+    begin
+      exeTrainerFeatures[i].cb:=TCheckBox.Create(self);
+      exeTrainerFeatures[i].cb.Caption:=exeTrainerFeatures[i].featurename;
+      exeTrainerFeatures[i].cb.Parent:=GroupBox2;
+    end;
+end;
+
+procedure TfrmExeTrainerGenerator.FormShow(Sender: TObject);
+var i:integer;
+begin
+  i:=max(max(button3.Width, btnAddFile.Width), btnRemoveFile.Width);
+
+  button3.width:=i;
+  btnAddFile.Width:=i;
+  btnRemoveFile.Width:=i;
+  groupbox3.Constraints.MinHeight:=panel1.height;
 end;
 
 procedure TfrmExeTrainerGenerator.ListView1ContextPopup(Sender: TObject; MousePos: TPoint; var Handled: Boolean);

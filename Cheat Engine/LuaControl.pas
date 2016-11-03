@@ -372,6 +372,7 @@ function control_doClick(L: PLua_State): integer; cdecl;
 var
   c: TControl;
 begin
+  result:=0;
   c:=luaclass_getClassObject(L);
   if assigned(c.OnClick) then
     c.OnClick(c);
@@ -425,7 +426,23 @@ begin
   end;
 end;
 
+function control_bringToFront(L: PLua_State): integer; cdecl;
+var
+  control: TControl;
+begin
+  control:=luaclass_getClassObject(L);
+  control.BringToFront;
+  result:=0
+end;
 
+function control_sendToBack(L: PLua_State): integer; cdecl;
+var
+  control: TControl;
+begin
+  control:=luaclass_getClassObject(L);
+  control.SendToBack;
+  result:=0
+end;
 
 procedure control_addMetaData(L: PLua_state; metatable: integer; userdata: integer);
 begin
@@ -463,7 +480,8 @@ begin
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'repaint', control_repaint);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'update', control_update);
 
-
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'bringToFront', control_bringToFront);
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'sendToBack', control_sendToBack);
 
   //luaclass_addPropertyToTable(L, metatable, userdata, 'Caption', control_getCaption, control_setCaption);
   //luaclass_addPropertyToTable(L, metatable, userdata, 'Top', control_getTop, control_setTop);

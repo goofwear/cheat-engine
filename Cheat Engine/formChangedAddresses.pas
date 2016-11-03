@@ -61,13 +61,15 @@ type
   private
     { Private declarations }
     addresslist: TMap;
+    faddress: ptruint;
     procedure refetchValues(specificaddress: ptruint=0);
-    function getBase(entry: TAddressEntry): ptruint;
+    procedure setAddress(a: ptruint);
   public
     { Public declarations }
     equation: string;
     foundcodedialog: pointer;
     procedure AddRecord;
+    property address: ptruint read fAddress write setAddress;
   end;
 
 
@@ -82,6 +84,7 @@ resourcestring
   rsStop='Stop';
   rsClose='Close';
   rsNoDescription = 'No Description';
+  rsChangedAddressesBy = 'Changed Addresses by %x';
 
 destructor TAddressEntry.destroy;
 begin
@@ -102,12 +105,6 @@ begin
   end;
 end;
 
-
-function TfrmChangedAddresses.getBase(entry: TAddressEntry): ptruint;
-//parse the equation
-begin
-
-end;
 
 procedure TfrmChangedAddresses.AddRecord;
 var
@@ -500,7 +497,7 @@ begin
   begin
     with TRegisters.create(self) do
     begin
-      borderstyle:=bsSingle;
+      //borderstyle:=bsSingle;
 
       ae:=TAddressEntry(changedlist.Selected.Data);
 
@@ -520,6 +517,12 @@ begin
     if not memorybrowser.visible then
       memorybrowser.show;
   end;
+end;
+
+procedure TfrmChangedAddresses.setAddress(a: ptruint);
+begin
+  faddress:=a;
+  caption:=format(rsChangedAddressesBy, [a]);
 end;
 
 procedure TfrmChangedAddresses.FormDestroy(Sender: TObject);

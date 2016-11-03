@@ -6,7 +6,7 @@ interface
 
 {$ifdef windows}
 uses windows, LCLIntf, sysutils, symbolhandler, CEFuncProc, NewKernelHandler, math,
-  CustomTypeHandler, ProcessHandlerUnit, commonTypeDefs;
+  CustomTypeHandler, ProcessHandlerUnit, commonTypeDefs, LazUTF8;
 {$endif}
 
 {$ifdef unix}
@@ -22,6 +22,7 @@ resourcestring
   rsBIFloat = '(float)';
   rsBIDouble = '(double)';
 
+
 type TAutoGuessEvent=function (address: ptruint; originalVariableType: TVariableType): TVariableType of object;
 
 type
@@ -31,7 +32,7 @@ type
 function isHumanReadableInteger(v: integer): boolean; //returns false if it's not an easy readable integer
 
 function FindTypeOfData(address: ptrUint; buf: pbytearray; size: integer; CustomType: PCustomType=nil; FindOption: TFindTypeOptions=[]):TVariableType;
-function DataToString(buf: PByteArray; size: integer; vartype: TVariableType): string;
+function DataToString(buf: PByteArray; size: integer; vartype: TVariableType; clean: boolean=false): string;
 function readAndParsePointer(address: ptruint; buf: pbytearray; variableType: TVariableType; customtype: TCustomType=nil; showashexadecimal: Boolean=false; showAsSigned: boolean=false; bytesize:integer=1): string;
 function readAndParseAddress(address: ptrUint; variableType: TVariableType; customtype: TCustomType=nil; showashexadecimal: Boolean=false; showAsSigned: boolean=false; bytesize:integer=1): string;
 procedure ParseStringAndWriteToAddress(value: string; address: ptruint; variabletype: TVariabletype; hexadecimal: boolean=false; customtype: TCustomType=nil);
@@ -89,6 +90,7 @@ begin
       end;
     finally
       freemem(ba);
+      ba:=nil;
     end;
 
     setlength(b,0);
@@ -144,6 +146,7 @@ begin
           end;
         finally
           freemem(ba);
+          ba:=nil;
         end;
       end;
     end;
@@ -246,9 +249,10 @@ begin
       try
         pbytearray(ws)[bytesize+1]:=0;
         pbytearray(ws)[bytesize]:=0;
-        result:=ws;
+        result:=utf16toutf8(ws);
       finally
         freemem(ws);
+        ws:=nil;
       end;
     end;
 
@@ -342,6 +346,7 @@ begin
           result:=readAndParsePointer(address, buf2, variabletype, customtype, showashexadecimal, showAsSigned, bytesize);
       finally
         freemem(buf2);
+        buf2:=nil;
       end;
     end;
 
@@ -355,7 +360,8 @@ begin
 
 
       finally
-        freemem(buf2)
+        freemem(buf2);
+        buf2:=nil;
       end;
 
     end;
@@ -368,6 +374,7 @@ begin
           result:=readAndParsePointer(address, buf2, variabletype, customtype, showashexadecimal, showAsSigned, bytesize);
       finally
         freemem(buf2);
+        buf2:=nil;
       end;
     end;
 
@@ -382,6 +389,7 @@ begin
 
         finally
           freemem(buf2);
+          buf2:=nil;
         end;
       end;
     end;
@@ -389,7 +397,7 @@ begin
 end;
 
 
-function DataToString(buf: PByteArray; size: integer; vartype: TVariableType): string;
+function DataToString(buf: PByteArray; size: integer; vartype: TVariableType; clean: boolean=false): string;
 {note: If type is of string unicode, the last 2 bytes will get set to 0, so watch what you're calling}
 var tr: Widestring;
     i: integer;
@@ -398,12 +406,12 @@ var tr: Widestring;
     tempbuf: pbytearray;
 begin
   case vartype of
-    vtByte: result:=rsBIByte+inttohex(buf[0],2) + '('+inttostr(buf[0])+')';
-    vtWord: result:=rsBIWord+inttohex(pword(buf)^,4) + '('+inttostr(pword(buf)^)+')';
-    vtDword: result:=rsBIDword+inttohex(pdword(buf)^,8) + '('+inttostr(pdword(buf)^)+')';
-    vtQword: result:=rsBIQword+inttohex(pqword(buf)^,16) + '('+inttostr(pqword(buf)^)+')';
-    vtSingle: result:=rsBIFloat+format('%.2f',[psingle(buf)^]);
-    vtDouble: result:=rsBIDouble+format('%.2f',[pdouble(buf)^]);
+    vtByte: if clean then result:=inttohex(buf[0],2) else result:=rsBIByte+inttohex(buf[0],2) + '('+inttostr(buf[0])+')';
+    vtWord: if clean then result:=inttohex(pword(buf)^,4) else result:=rsBIWord+inttohex(pword(buf)^,4) + '('+inttostr(pword(buf)^)+')';
+    vtDword: if clean then result:=inttohex(pdword(buf)^,8) else result:=rsBIDword+inttohex(pdword(buf)^,8) + '('+inttostr(pdword(buf)^)+')';
+    vtQword: if clean then result:=inttohex(pqword(buf)^,16) else result:=rsBIQword+inttohex(pqword(buf)^,16) + '('+inttostr(pqword(buf)^)+')';
+    vtSingle: if clean then result:=format('%.2f',[psingle(buf)^]) else result:=rsBIFloat+format('%.2f',[psingle(buf)^]);
+    vtDouble: if clean then result:=format('%.2f',[pdouble(buf)^]) else result:=rsBIDouble+format('%.2f',[pdouble(buf)^]);
     vtString:
     begin
       getmem(tempbuf,size+1);
@@ -414,6 +422,7 @@ begin
         result:=pchar(tempbuf);
       finally
         freemem(tempbuf);
+        tempbuf:=nil;
       end;
     end;
 
@@ -430,6 +439,7 @@ begin
 
       finally
         freemem(tempbuf);
+        tempbuf:=nil;
       end;
     end;
 
@@ -440,8 +450,9 @@ begin
       else
         a:=ptruint(pdword(buf)^);
 
+      if clean then result:='' else result:='(pointer)';
 
-      result:='(pointer)'+symhandler.getNameFromAddress(a,true,true);
+      result:=result+symhandler.getNameFromAddress(a,true,true);
 
 //      result:='(pointer)'+inttohex(pqword(buf)^,16) else result:='(pointer)'+inttohex(pdword(buf)^,8);
     end;
@@ -568,7 +579,10 @@ begin
 
 
 
+
     i:=address mod 4;
+    if size in [4,8] then i:=0; //skip this test, it's a known size datablock
+
     case i of
       1: //1 byte
       begin

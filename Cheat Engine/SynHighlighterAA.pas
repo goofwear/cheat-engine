@@ -295,7 +295,7 @@ type
     function Func39: TtkTokenKind; //enable
     function Func40: TtkTokenKind; //esp
     function Func42: TtkTokenKind; //ends
-    function Func43: TtkTokenKind; //alloc /define //rax   /rip
+    function Func43: TtkTokenKind; //alloc /define //rax   /rip /align
     function Func44: TtkTokenKind; //resb
     function Func45: TtkTokenKind;
     function Func46: TtkTokenKind; //resd
@@ -441,7 +441,7 @@ procedure aa_RemoveExtraCommand(command:pchar);
 begin
   if extracommands<>nil then
   begin
-    extracommands.Delete(extracommands.IndexOf(command));
+    if extracommands.IndexOf(command)<>-1 then extracommands.Delete(extracommands.IndexOf(command));
     if extracommands.Count=0 then
       freeandnil(extracommands);
   end;
@@ -817,7 +817,8 @@ begin
   {$endif}
       if KeyComp('alloc') then Result := tkKey else
         if KeyComp('define') then Result := tkKey else
-          Result := tkIdentifier;
+          if KeyComp('align') then Result := tkKey else
+            Result := tkIdentifier;
 end;
 
 function TSynAASyn.Func44: TtkTokenKind; //rbx
@@ -1231,8 +1232,11 @@ begin
 end;
 
 procedure TSynAASyn.BraceOpenProc;
+var l: integer;
 begin
-  if (Run=0) and (fLine[Run + 1] = '$') and   //{$LUA}
+  l:=StrLen(fLine);
+
+  if (Run=0) and (l>=6) and (fLine[Run + 1] = '$') and   //{$LUA}
      (uppercase(fLine[Run + 2]) = 'L') and
      (uppercase(fLine[Run + 3]) = 'U') and
      (uppercase(fLine[Run + 4]) = 'A') and
@@ -1252,7 +1256,7 @@ begin
     exit;
   end
   else
-  if (Run=0) and (fLine[Run + 1] = '$') and   //{$ASM}
+  if (Run=0) and (l>=6) and (fLine[Run + 1] = '$') and   //{$ASM}
      (uppercase(fLine[Run + 2]) = 'A') and
      (uppercase(fLine[Run + 3]) = 'S') and
      (uppercase(fLine[Run + 4]) = 'M') and
@@ -1261,6 +1265,21 @@ begin
   begin
     FTokenID:=tkIdentifier;
     inc(run,5);
+    exit;
+  end
+  else
+  if (Run=0) and (l>=9) and (fLine[Run + 1] = '$') and   //{$STRICT}
+     (uppercase(fLine[Run + 2]) = 'S') and
+     (uppercase(fLine[Run + 3]) = 'T') and
+     (uppercase(fLine[Run + 4]) = 'R') and
+     (uppercase(fLine[Run + 5]) = 'I') and
+     (uppercase(fLine[Run + 6]) = 'C') and
+     (uppercase(fLine[Run + 7]) = 'T') and
+     (fLine[Run + 8] = '}')
+  then
+  begin
+    FTokenID:=tkIdentifier;
+    inc(run,8);
     exit;
   end
   else

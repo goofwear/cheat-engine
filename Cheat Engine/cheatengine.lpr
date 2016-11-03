@@ -3,23 +3,24 @@ program cheatengine;
 {$mode objfpc}{$H+}
 
 uses
+  first,
   {$IFDEF UNIX}{$IFDEF UseCThreads}
   cthreads,
   {$ENDIF}{$ENDIF}
   Interfaces, // this includes the LCL widgetset
-  controls, sysutils, Forms, dialogs, bogus, MainUnit, CEDebugger,
-  NewKernelHandler, CEFuncProc, ProcessHandlerUnit, symbolhandler,
-  Assemblerunit, hypermode, byteinterpreter, addressparser, autoassembler,
-  ProcessWindowUnit, MainUnit2, Filehandler, dbvmPhysicalMemoryHandler,
-  frameHotkeyConfigUnit, formsettingsunit, HotkeyHandler, formhotkeyunit,
-  AdvancedOptionsUnit, inputboxtopunit, plugin, pluginexports, tlgUnit,
-  aboutunit, frmProcesswatcherExtraUnit, frmProcessWatcherUnit,
-  ModuleSafetyUnit, frmExcludeHideUnit, ConfigUnrandomizerFrm, HotKeys,
-  TypePopup, CommentsUnit, FoundCodeUnit, foundlisthelper, unrandomizer,
-  SaveFirstScan, savedscanhandler, memscan, formScanningUnit, KernelDebugger,
-  formDifferentBitSizeUnit, formAddressChangeUnit, Changeoffsetunit, speedhack2,
-  formPointerOrPointeeUnit, AccessCheck, formmemoryregionsunit, OpenSave,
-  formProcessInfo, frmautoinjectunit, MenuItemExtra, MemoryBrowserFormUnit,
+  controls, sysutils, Forms, LazUTF8, dialogs, MainUnit, CEDebugger, NewKernelHandler,
+  CEFuncProc, ProcessHandlerUnit, symbolhandler, Assemblerunit, hypermode,
+  byteinterpreter, addressparser, autoassembler, ProcessWindowUnit, MainUnit2,
+  Filehandler, dbvmPhysicalMemoryHandler, frameHotkeyConfigUnit,
+  formsettingsunit, HotkeyHandler, formhotkeyunit, AdvancedOptionsUnit,
+  inputboxtopunit, plugin, pluginexports, tlgUnit, aboutunit,
+  frmProcesswatcherExtraUnit, frmProcessWatcherUnit, ModuleSafetyUnit,
+  frmExcludeHideUnit, HotKeys, TypePopup, CommentsUnit, FoundCodeUnit,
+  foundlisthelper, unrandomizer, SaveFirstScan, savedscanhandler, memscan,
+  KernelDebugger, formDifferentBitSizeUnit,
+  formAddressChangeUnit, Changeoffsetunit, speedhack2, formPointerOrPointeeUnit,
+  AccessCheck, formmemoryregionsunit, OpenSave, formProcessInfo,
+  frmautoinjectunit, MenuItemExtra, MemoryBrowserFormUnit,
   disassemblerviewlinesunit, disassemblerviewunit, PasteTableentryFRM,
   frmBreakpointlistunit, DissectCodeThread, DissectCodeunit, Valuechange,
   FindWindowUnit, stacktrace2, frmstacktraceunit, frmBreakThreadUnit,
@@ -89,11 +90,15 @@ uses
   Parsers, Globals, NullStream, RipRelativeScanner, LuaRipRelativeScanner,
   VirtualQueryExCache, disassemblerthumb, AccessedMemory, LuaStructureFrm,
   MemoryQuery, pointerparser, GnuAssembler, binutils, dbvmLoadManual, mikmod,
-  frmEditHistoryUnit, LuaInternet;
+  frmEditHistoryUnit, LuaInternet, xinput, frmUltimap2Unit, cpuidunit, libipt,
+  DPIHelper, Graphics, fontSaveLoadRegistry, registry, frmWatchlistUnit,
+frmWatchListAddEntryUnit, frmBusyUnit, FindDialogFix;
 
 {$R cheatengine.res}
 //{$R manifest.res}  //lazarus now has this build in
 //{$R Sounds.rc}
+//{$R images.rc}
+{$R images.res}
 {$R Sounds.res}
 
 {$ifdef cpu32}
@@ -148,11 +153,11 @@ begin
       //it needs to load a table
       if fileexists(tabletoload)=false then //try to fix this
       begin
-        if fileexists(ansitoutf8(tabletoload)) then
-          tabletoload:=ansitoutf8(tabletoload)
+        if fileexists(WinCPToUTF8(tabletoload)) then
+          tabletoload:=WinCPToUTF8(tabletoload)
         else
-        if fileexists(utf8toansi(tabletoload)) then
-          tabletoload:=utf8toansi(tabletoload);
+        if fileexists(UTF8ToWinCP(tabletoload)) then
+          tabletoload:=UTF8ToWinCP(tabletoload);
       end;
 
       if origin='' then
@@ -163,7 +168,9 @@ begin
 
       try
         try
+          if mainformvisible then LoadSettingsFromRegistry;
           LoadTable(tabletoload,false);
+          MainForm.Savedialog1.FileName:=tabletoload;
         finally
           if ExtractFileName(tabletoload)='CET_TRAINER.CETRAINER' then //Let's just hope no-one names their trainer exactly this...
             DeleteFile(tabletoload);
@@ -175,7 +182,9 @@ begin
           application.Terminate;
         end;
       end;
-    end;
+    end
+    else
+      LoadSettingsFromRegistry;
   except
   end;
 
@@ -201,9 +210,84 @@ begin
   mainform.visible:=mainformvisible;
 end;
 
+type TFormFucker=class
+  private
+    procedure addFormEvent(Sender: TObject; Form: TCustomForm);
+end;
+
+var overridefont: TFont;
+procedure TFormFucker.addFormEvent(Sender: TObject; Form: TCustomForm);
 begin
-  Application.Title:='Cheat Engine 6.5';
+  //fuuuuucking time
+  if (form<>nil) and (overridefont<>nil) then
+    form.Font:=overridefont;
+
+
+end;
+
+var
+  i: integer;
+  istrainer: boolean;
+  ff: TFormFucker;
+  r: TRegistry;
+begin
+  Application.Title:='Cheat Engine 6.6';
   Application.Initialize;
+
+  overridefont:=nil;
+
+  //first check if this is a trainer.
+  istrainer:=false;
+  for i:=1 to Paramcount do
+  begin
+    if pos('.CETRAINER', uppercase(ParamStr(i)))>0 then
+    begin
+      istrainer:=true; //a trainer could give some extra parameters like dpiaware , but that is fine
+      break;
+    end;
+  end;
+
+  if not istrainer then
+  begin
+    //check the user preferences
+    r := TRegistry.Create;
+    r.RootKey := HKEY_CURRENT_USER;
+    if r.OpenKey('\Software\Cheat Engine',false) then
+    begin
+      if r.ValueExists('Override Default Font') then
+      begin
+        if r.ReadBool('Override Default Font') then
+        begin
+          if r.OpenKey('Font', false) then
+          begin
+            overridefont:=TFont.create;
+            LoadFontFromRegistry(overridefont,r);
+
+            ff:=TFormFucker.Create;
+            screen.AddHandlerFormAdded(@ff.addFormEvent)
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  for i:=1 to Paramcount do
+  begin
+    if Copy(uppercase(ParamStr(i)),1,9)='FONTSIZE=' then
+    begin
+      try
+        if overridefont=nil then
+          overridefont:=TFont.create;
+
+        overridefont.size:=strtoint(copy(ParamStr(i), 10, length(ParamStr(i))));
+        ff:=TFormFucker.Create;
+        screen.AddHandlerFormAdded(@ff.addFormEvent);
+
+      except
+      end;
+    end;
+  end;
+
   getcedir;
 
   doTranslation;
@@ -222,6 +306,7 @@ begin
   InitializeLuaScripts;
 
   handleparameters;
+
   Application.Run;
 end.
 

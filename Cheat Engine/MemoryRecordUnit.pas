@@ -8,7 +8,7 @@ interface
 uses
   Windows, forms, graphics, Classes, SysUtils, controls, stdctrls, comctrls,symbolhandler,
   cefuncproc,newkernelhandler, autoassembler, hotkeyhandler, dom, XMLRead,XMLWrite,
-  customtypehandler, fileutil, LCLProc, commonTypeDefs, pointerparser;
+  customtypehandler, fileutil, LCLProc, commonTypeDefs, pointerparser, LazUTF8, LuaClass;
 {$endif}
 
 {$ifdef unix}
@@ -20,8 +20,18 @@ uses
 
 resourcestring
   rsMRNibbleSupportIsOnlyForHexadecimalDisplay = 'Nibble support is only for hexadecimal display';
-
-type TMemrecHotkeyAction=(mrhToggleActivation, mrhToggleActivationAllowIncrease, mrhToggleActivationAllowDecrease, mrhActivate, mrhDeactivate, mrhSetValue, mrhIncreaseValue, mrhDecreaseValue);
+  rsPqqqqqqqq = 'P->????????';
+  rsP = 'P->';
+  rsError = 'error';
+  rsToggleActivation = 'Toggle Activation';
+  rsToggleActivationAllowIncrease = 'Toggle Activation Allow Increase';
+  rsToggleActivationAllowDecrease = 'Toggle Activation Allow Decrease';
+  rsActivate = 'Activate';
+  rsDeactivate = 'Deactivate';
+  rsSetValue = 'Set Value';
+  rsIncreaseValue = 'Increase Value';
+  rsDecreaseValue = 'Decrease Value';
+type TMemrecHotkeyAction=(mrhToggleActivation=0, mrhToggleActivationAllowIncrease=1, mrhToggleActivationAllowDecrease=2, mrhActivate=3, mrhDeactivate=4, mrhSetValue=5, mrhIncreaseValue=6, mrhDecreaseValue=7);
 
 type TFreezeType=(ftFrozen, ftAllowIncrease, ftAllowDecrease);
 
@@ -60,11 +70,55 @@ type TMemRecExtraData=record
   end;
 
 
-
-
 type
-  TMemoryRecordActivateEvent=function (sender: TObject; before, currentstate: boolean): boolean of object;
   TMemoryRecordHotkey=class;
+  TMemoryRecord=class;
+
+  TMemrecOffset=class
+  private
+    fowner: TMemoryRecord;
+    foffset: integer;
+    special: boolean; //if set, look at luaref or text, else just keep it to offset (also, update offset to the latest value while at it)
+    text: string; //symhandler interpretable value, or a luastatement
+    luaref: integer; //if lua, this contains a reference to the function (so it doesn't have to be parsed each time)
+
+    finvalid: boolean;
+    funparsed: boolean;
+
+    hasValue: boolean;
+
+
+    fOnlyUpdateAfterInterval: boolean;
+    fOnlyUpdateWithReinterpret: boolean;
+    fUpdateInterval: dword;
+    LastUpdateInterval: qword;
+    forced: boolean; //set to true if you wish to let getOffset ignore the no-update rules
+
+    function getOffsetNoBase: integer;
+    procedure cleanupluaref;
+  public
+    procedure forceUpdate;
+    function getOffset(currentBase: ptruint): integer;
+    procedure setOffset(o: integer);
+    procedure setOffsetText(s: string);
+    constructor create(owner: TMemoryRecord);
+    destructor destroy; override;
+  published
+    property offset: integer read getOffsetNoBase write setOffset;
+    property offsetText: string read text write setOffsetText;
+    property unparsed: boolean read funparsed;
+    property invalid: boolean read fInvalid;
+
+    property OnlyUpdateWithReinterpret: boolean read fOnlyUpdateWithReinterpret write fOnlyUpdateWithReinterpret;
+    property OnlyUpdateAfterInterval: boolean read fOnlyUpdateAfterInterval write fOnlyUpdateAfterInterval;
+    property UpdateInterval: DWORD read fUpdateInterval write fUpdateInterval;
+  end;
+
+  TMemrecOffsetList=array of TMemrecOffset;
+
+
+  TMemoryRecordActivateEvent=function (sender: TObject; before, currentstate: boolean): boolean of object;
+
   TMemoryRecord=class
   private
     fID: integer;
@@ -114,12 +168,18 @@ type
 
     fDontSave: boolean;
 
+    luaref: integer; //luaclass object to this instance
+
     fonactivate, fondeactivate: TMemoryRecordActivateEvent;
     fOnDestroy: TNotifyEvent;
+
+    fpointeroffsets: array of TMemrecOffset; //if longer than 0, this is a pointer
+    function getPointerOffset(index: integer): TMemrecOffset;
+
     function getByteSize: integer;
     function BinaryToString(b: pbytearray; bufsize: integer): string;
     function getAddressString: string;
-    function getuniquehotkeyid: integer;
+
     procedure setActive(state: boolean);
     procedure setAllowDecrease(state: boolean);
     procedure setAllowIncrease(state: boolean);
@@ -147,6 +207,9 @@ type
     function getDropDownCount: integer;
     function getDropDownValue(index: integer): string;
     function getDropDownDescription(index: integer): string;
+
+    function GetCollapsed: boolean;
+    procedure SetCollapsed(state: boolean);
   public
 
 
@@ -155,8 +218,6 @@ type
     Description : string;
     interpretableaddress: string;
 
-
-    pointeroffsets: array of integer; //if set this is an pointer
 
 
 
@@ -172,6 +233,8 @@ type
 
     //showAsHex: boolean;
 
+    function getuniquehotkeyid: integer;
+
     //free for editing by user:
     function hasSelectedParent: boolean;
     function hasParent: boolean;
@@ -181,6 +244,8 @@ type
     procedure beginEdit;
     procedure endEdit;
 
+    procedure setOffsetCount(c: integer);
+    function getoffsetCount: integer;
     function isPointer: boolean;
     function isOffset: boolean;
     procedure ApplyFreeze;
@@ -218,6 +283,9 @@ type
 
     procedure SetVisibleChildrenState;
 
+    procedure cleanupPointerOffsets;
+    function getLuaRef: integer;
+
     constructor Create(AOwner: TObject);
     destructor destroy; override;
 
@@ -228,14 +296,16 @@ type
     property visible: boolean read fVisible write setVisible;
 
     property Child[index: integer]: TMemoryRecord read getChild; default;
-
+    property offsets[index: integer]: TMemrecOffset read getPointerOffset;
 
 
   published
     property IsGroupHeader: boolean read fisGroupHeader write fisGroupHeader;
     property IsReadableAddress: boolean read fIsReadableAddress; //gets set by getValue, so at least read the value once
+    property IsReadable: boolean read fIsReadableAddress;
     property ID: integer read fID write setID;
     property Index: integer read getIndex;
+    property Collapsed: boolean read GetCollapsed write SetCollapsed;
     property Color: TColor read fColor write setColor;
     property Count: integer read getChildCount;
     property AddressString: string read getAddressString;
@@ -261,13 +331,21 @@ type
     property OnActivate: TMemoryRecordActivateEvent read fOnActivate write fOnActivate;
     property OnDeactivate: TMemoryRecordActivateEvent read fOnDeActivate write fOndeactivate;
     property OnDestroy: TNotifyEvent read fOnDestroy write fOnDestroy;
+    property offsetCount: integer read getoffsetCount write setOffsetCount;
 
   end;
+
+  THKSoundFlag=(hksPlaySound=0, hksSpeakText=1, hksSpeakTextEnglish=2); //playSound excludes speakText
 
   TMemoryRecordHotkey=class
   private
     fOnHotkey: TNotifyevent;
     fOnPostHotkey: TNotifyevent;
+    factivateSound: string;
+    fdeactivateSound: string;
+    fActivateSoundFlag: THKSoundFlag;
+    fDeactivateSoundFlag: THKSoundFlag;
+
   public
     fID: integer;
     fDescription: string;
@@ -276,11 +354,20 @@ type
     action: TMemrecHotkeyAction;
     value: string;
 
+
+    procedure playActivateSound;
+    procedure playDeactivateSound;
+
     procedure doHotkey;
     constructor create(AnOwner: TMemoryRecord);
     destructor destroy; override;
   published
-    property Description: string read fDescription;
+    property ActivateSoundFlag: THKSoundFlag read fActivateSoundFlag write fActivateSoundFlag;
+    property DeactivateSoundFlag: THKSoundFlag read fDeactivateSoundFlag write fDeactivateSoundFlag;
+
+    property ActivateSound: string read factivateSound write factivateSound;
+    property DeactivateSound: string read fdeactivateSound write fdeactivateSound;
+    property Description: string read fDescription write fDescription;
     property Owner: TMemoryRecord read fOwner;
     property ID: integer read fID;
     property OnHotkey: TNotifyEvent read fOnHotkey write fOnHotkey;
@@ -295,12 +382,174 @@ implementation
 
 {$ifdef windows}
 uses mainunit, addresslist, formsettingsunit, LuaHandler, lua, lauxlib, lualib,
-  processhandlerunit, Parsers;
+  processhandlerunit, Parsers, winsapi;
 {$endif}
 
 {$ifdef unix}
 uses processhandlerunit, Parsers;
 {$endif}
+
+{-----------------------------TMemrecOffset---------------------------------}
+
+procedure TMemrecOffset.forceUpdate;
+begin
+  Forced:=true;
+end;
+
+function TMemrecOffset.getOffsetNoBase: integer;
+begin
+  result:=getOffset(0);
+end;
+
+function TMemrecOffset.getOffset(currentBase: ptruint): integer;
+var
+  e: boolean;
+  memrecluaobjectref: integer;
+  stack: integer;
+begin
+  if special then
+  begin
+    if (not forced) then
+    begin
+      if OnlyUpdateWithReinterpret and hasValue then exit(foffset);
+
+      if OnlyUpdateAfterInterval and (GetTickCount64<LastUpdateInterval+UpdateInterval) then exit(foffset);
+    end
+    else
+      forced:=false;
+
+    LastUpdateInterval:=GetTickCount;
+
+
+    finvalid:=true;
+    hasValue:=false;
+    foffset:=0;
+
+    //parse it/call the lua function
+    if luaref=-1 then
+      foffset:=symhandler.getAddressFromName(text, false, finvalid)
+    else
+    begin
+      memrecluaobjectref:=fowner.getLuaRef;
+
+      LUACS.Enter;
+      try
+        stack:=lua_Gettop(luavm);
+
+        lua_rawgeti(Luavm, LUA_REGISTRYINDEX, LuaRef);
+        lua_rawgeti(Luavm, LUA_REGISTRYINDEX, memrecluaobjectref);
+        lua_pushinteger(luavm, currentBase);
+
+        if lua_pcall(Luavm, 2, 1,0)=0 then
+          if lua_isnumber(Luavm, -1) then
+          begin
+            foffset:=lua_tointeger(Luavm, -1);
+            finvalid:=false;
+          end;
+
+        lua_pop(luavm, 1);
+
+      finally
+        lua_settop(luavm, stack);
+        luacs.Leave;
+      end;
+
+
+    end;
+
+    if not finvalid then
+      hasValue:=true;
+  end
+  else
+    finvalid:=false;
+
+  result:=foffset;
+end;
+
+procedure TMemrecOffset.cleanupluaref;
+begin
+  if luaref<>-1 then //dereference this lua function
+  begin
+    luaL_unref(LuaVM, LUA_REGISTRYINDEX, luaref);
+    luaref:=-1;
+  end;
+end;
+
+procedure TMemrecOffset.setOffset(o: integer);
+begin
+  offsettext:=inttohex(o,1);
+end;
+
+procedure TMemrecOffset.setOffsetText(s: string);
+var
+  e: boolean;
+  s2: string;
+  stack: integer;
+begin
+  funparsed:=true;
+  cleanupluaref;
+  text:=s;
+
+  special:=false;
+
+  try
+    foffset:=StrToQWordEx(ConvertHexStrToRealStr(s));
+    funparsed:=false;
+    exit;
+  except
+  end;
+
+
+  special:=true;
+  //parse it as a symbolhandler text, if that fails, try lua
+
+  foffset:=symhandler.getAddressFromName(s, false, e);
+  if e then
+  begin
+    //try lua
+    s2:='memrec, address=... return '+s;
+
+
+    LUACS.Enter;
+    try
+      stack:=lua_Gettop(luavm);
+      if luaL_loadstring(luavm, pchar(s2))=0 then
+        if lua_isfunction(luavm,-1) then //store a reference to this function
+          luaref:=luaL_ref(luavm, LUA_REGISTRYINDEX);
+
+    finally
+      lua_settop(luavm, stack);
+      LuaCS.Leave;
+    end;
+
+    funparsed:=luaref=-1;
+
+    if not funparsed then
+    begin
+      //call it to be sure it's ok and not returning nil
+      forceUpdate;
+      getOffsetNoBase;
+      if finvalid then
+      begin
+        funparsed:=true;
+        cleanupluaref;
+      end;
+    end;
+
+  end else funparsed:=false;
+
+end;
+
+constructor TMemrecOffset.create(owner: TMemoryRecord);
+begin
+  fOwner:=owner;
+  luaref:=-1;
+end;
+
+destructor TMemrecOffset.destroy;
+begin
+  cleanupluaref;
+end;
 
 
 {-----------------------------TMemoryRecordHotkey------------------------------}
@@ -341,7 +590,66 @@ begin
     fOnPostHotkey(self);
 end;
 
+procedure TMemoryRecordHotkey.playActivateSound;
+var s: string;
+begin
+  if activateSound<>'' then
+  begin
+    if ActivateSoundFlag in [hksSpeakText, hksSpeakTextEnglish] then
+    begin
+      s:=ActivateSound;
+      s:=StringReplace(s,'{MRDescription}', fowner.Description,[rfIgnoreCase, rfReplaceAll]);
+      s:=StringReplace(s,'{Description}', Description, [rfIgnoreCase, rfReplaceAll]);
+
+
+
+      if ActivateSoundFlag=hksSpeakTextEnglish then
+        speak('<voice required="Language=409">'+s+'</voice>')
+      else
+        speak(s)
+    end
+    else
+      LUA_DoScript('playSound(findTableFile([['+activateSound+']]))');
+  end;
+end;
+
+procedure TMemoryRecordHotkey.playDeactivateSound;
+var s: string;
+begin
+  if DeactivateSound<>'' then
+  begin
+    if DeactivateSoundFlag in [hksSpeakText, hksSpeakTextEnglish] then
+    begin
+      s:=DeactivateSound;
+      s:=StringReplace(s,'{MRDescription}', fowner.Description,[rfIgnoreCase, rfReplaceAll]);
+      s:=StringReplace(s,'{Description}', Description, [rfIgnoreCase, rfReplaceAll]);
+
+      if DeactivateSoundFlag=hksSpeakTextEnglish then
+        speak('<voice required="Language=409">'+s+'</voice>')
+      else
+        speak(s);
+    end
+    else
+      LUA_DoScript('playSound(findTableFile([['+deactivateSound+']]))');
+  end;
+end;
+
+
 {---------------------------------MemoryRecord---------------------------------}
+
+function TMemoryRecord.GetCollapsed: boolean;
+begin
+  result:=not treenode.Expanded;
+end;
+
+procedure TMemoryRecord.SetCollapsed(state: boolean);
+begin
+  if state then
+    treenode.Collapse(false)
+  else
+    treenode.Expand(false);
+end;
+
 
 function TMemoryRecord.getDropDownCount: integer;
 begin
@@ -407,6 +715,27 @@ begin
     result:=TMemoryRecordHotkey(hotkeylist[index]);
 end;
 
+procedure TMemoryRecord.cleanupPointerOffsets;
+var i: integer;
+begin
+  for i:=0 to length(fpointeroffsets)-1 do
+    if fpointeroffsets[i]<>nil then
+      freeandnil(fpointeroffsets[i]);
+
+  setlength(fpointeroffsets,0);
+end;
+
+function TMemoryRecord.getLuaRef: integer;
+begin
+  if luaref=-1 then
+  begin
+    luaclass_newClass(luavm, self);
+    luaref:=luaL_ref(luavm, LUA_REGISTRYINDEX);
+  end;
+
+  result:=luaref;
+end;
+
 constructor TMemoryRecord.create(AOwner: TObject);
 begin
   fVisible:=true;
@@ -418,6 +747,8 @@ begin
   fDropDownList:=tstringlist.create;
 
   foptions:=[];
+
+  luaref:=-1;
 
   inherited create;
 end;
@@ -457,6 +788,9 @@ begin
 
   if fDropDownList<>nil then
     freeandnil(fDropDownList);
+
+  if luaref<>-1 then
+    luaL_unref(LuaVM, LUA_REGISTRYINDEX, luaref);
 
   inherited Destroy;
 
@@ -754,19 +1088,36 @@ begin
     tempnode:=CheatEntry.FindNode('Offsets');
     if tempnode<>nil then
     begin
-      setlength(pointeroffsets,tempnode.ChildNodes.Count);
+      offsetCount:=tempnode.ChildNodes.Count;
+
       j:=0;
       for i:=0 to tempnode.ChildNodes.Count-1 do
       begin
-
-        if tempnode.ChildNodes[i].NodeName='Offset' then
+        tempnode2:=tempnode.ChildNodes[i];
+        if tempnode2.NodeName='Offset' then
         begin
-          pointeroffsets[j]:=strtoint('$'+tempnode.ChildNodes[i].TextContent);
+          fpointeroffsets[j].offsetText:=tempnode2.TextContent;
+
+          a:=tempnode2.Attributes.GetNamedItem('Interval');
+          if (a<>nil) then
+          begin
+            try
+              fpointeroffsets[j].UpdateInterval:=StrToInt(a.TextContent);
+              fpointeroffsets[j].OnlyUpdateAfterInterval:=true;
+            except
+            end;
+          end;
+
+          a:=tempnode2.Attributes.GetNamedItem('UpdateOnFullRefresh');
+          if (a<>nil) and (a.TextContent='1') then
+            fpointeroffsets[j].OnlyUpdateWithReinterpret:=true;
+
+
           inc(j);
         end;
       end;
 
-      setlength(pointeroffsets,j); //set to the proper size
+      offsetcount:=j;  //set to the proper size
     end;
 
     tempnode:=CheatEntry.FindNode('Hotkeys');
@@ -803,6 +1154,40 @@ begin
           tempnode2:=tempnode.childnodes[i].findnode('Value');
           if tempnode2<>nil then
             hk.value:=tempnode2.TextContent;
+
+          tempnode2:=tempnode.childnodes[i].findnode('ActivateSound');
+          if tempnode2<>nil then
+          begin
+            hk.activateSound:=tempnode2.TextContent;
+
+            a:=tempnode2.Attributes.GetNamedItem('TTS');
+            if (a<>nil) then
+            begin
+              if (a.TextContent='EN') then
+                hk.ActivateSoundFlag:=hksSpeakTextEnglish
+              else
+                hk.ActivateSoundFlag:=hksSpeakText;
+            end
+            else
+              hk.ActivateSoundFlag:=hksPlaySound;
+          end;
+
+          tempnode2:=tempnode.childnodes[i].findnode('DeactivateSound');
+          if tempnode2<>nil then
+          begin
+            hk.deactivateSound:=tempnode2.TextContent;
+
+            a:=tempnode2.Attributes.GetNamedItem('TTS');
+            if (a<>nil) then
+            begin
+              if (a.TextContent='EN') then
+                hk.DeactivateSoundFlag:=hksSpeakTextEnglish
+              else
+                hk.DeactivateSoundFlag:=hksSpeakText;
+            end
+            else
+              hk.DeactivateSoundFlag:=hksPlaySound;
+          end;
 
           tempnode2:=tempnode.ChildNodes[i].FindNode('Keys');
           if tempnode2<>nil then
@@ -891,6 +1276,7 @@ var
   hks, hk,hkkc: TDOMNode;
   opt: TDOMNode;
   laststate: TDOMNode;
+  soundentry: TDOMNode;
 
   tn: TTreenode;
   i,j: integer;
@@ -899,6 +1285,7 @@ var
   s: ansistring;
 
   ddl: TDOMNode;
+  offset: TDOMNode;
 {$ENDIF}
 begin
   {$IFNDEF UNIX}
@@ -1092,8 +1479,29 @@ begin
       begin
         Offsets:=cheatEntry.AppendChild(doc.CreateElement('Offsets'));
 
-        for i:=0 to length(pointeroffsets)-1 do
-          Offsets.AppendChild(doc.CreateElement('Offset')).TextContent:=inttohex(pointeroffsets[i],1);
+        for i:=0 to offsetCount-1 do
+        begin
+          offset:=Offsets.AppendChild(doc.CreateElement('Offset'));
+          offset.TextContent:=fpointeroffsets[i].offsetText;
+
+          if fpointeroffsets[i].OnlyUpdateAfterInterval then
+          begin
+            a:=doc.CreateAttribute('Interval');
+            a.TextContent:=inttostr(fpointeroffsets[i].UpdateInterval);
+            offset.Attributes.SetNamedItem(a);
+
+
+          end;
+
+          if fpointeroffsets[i].OnlyUpdateWithReinterpret then
+          begin
+            a:=doc.CreateAttribute('UpdateOnFullRefresh');
+            a.TextContent:='1';
+            offset.Attributes.SetNamedItem(a);
+          end;
+
+
+        end;
 
         cheatEntry.AppendChild(Offsets);
       end;
@@ -1127,6 +1535,42 @@ begin
 
       if hotkey[i].id>=0 then
         hk.AppendChild(doc.CreateElement('ID')).TextContent:=inttostr(hotkey[i].id);
+
+      if hotkey[i].activateSound<>'' then
+      begin
+        soundentry:=hk.AppendChild(doc.CreateElement('ActivateSound'));;
+        soundentry.TextContent:=hotkey[i].activateSound;
+
+        if hotkey[i].ActivateSoundFlag<>hksPlaySound then
+        begin
+          a:=doc.CreateAttribute('TTS');
+          if hotkey[i].ActivateSoundFlag=hksSpeakTextEnglish then
+            a.TextContent:='EN'
+          else
+            a.TextContent:='';
+
+          soundentry.Attributes.SetNamedItem(a);
+        end;
+
+      end;
+
+      if hotkey[i].deactivateSound<>'' then
+      begin
+        soundentry:=hk.AppendChild(doc.CreateElement('DeactivateSound'));
+        soundentry.TextContent:=hotkey[i].deactivateSound;
+
+        if hotkey[i].DeactivateSoundFlag<>hksPlaySound then
+        begin
+          a:=doc.CreateAttribute('TTS');
+          if hotkey[i].DeactivateSoundFlag=hksSpeakTextEnglish then
+            a.TextContent:='EN'
+          else
+            a.TextContent:='';
+
+          soundentry.Attributes.SetNamedItem(a);
+        end;
+      end;
+
     end;
 
   end;
@@ -1191,9 +1635,37 @@ begin
     dec(editcount);
 end;
 
+function TMemoryRecord.getPointerOffset(index: integer): TMemrecOffset;
+begin
+  if (index>=0) and (index<length(fpointeroffsets)) then
+    result:=fpointeroffsets[index]
+  else
+    result:=nil;
+end;
+
+procedure TMemoryRecord.setOffsetCount(c: integer);
+var
+  oldc: integer;
+  i: integer;
+begin
+  oldc:=offsetcount;
+
+  for i:=oldc-1 downto c do
+    freeandnil(fpointeroffsets[i]);
+
+  setlength(fpointeroffsets, c);
+  for i:=oldc to c-1 do
+    fpointeroffsets[i]:=TMemrecOffset.create(self);
+end;
+
+function TMemoryRecord.getOffsetCount: integer;
+begin
+  result:=length(fpointeroffsets);
+end;
+
 function TMemoryRecord.isPointer: boolean;
 begin
-  result:=length(pointeroffsets)>0;
+  result:=offsetcount>0;
 end;
 
 function TMemoryRecord.isOffset: boolean;
@@ -1362,31 +1834,78 @@ begin
 end;
 
 procedure TMemoryRecord.DoHotkey(hk: TMemoryRecordhotkey);
+var oldstate: boolean;
 begin
   if (hk<>nil) and (hk.owner=self) then
   begin
     try
       case hk.action of
-        mrhToggleActivation: active:=not active;
-        mrhSetValue:         SetValue(hk.value);
-        mrhIncreaseValue:    increaseValue(hk.value);
-        mrhDecreaseValue:    decreaseValue(hk.value);
+        mrhToggleActivation:
+        begin
+          active:=not active;
+
+          if active then
+            hk.playActivateSound
+          else
+            hk.playDeactivateSound;
+        end;
+
+        mrhSetValue:
+        begin
+          SetValue(hk.value);
+
+          hk.playActivateSound;
+        end;
+
+        mrhIncreaseValue:
+        begin
+          increaseValue(hk.value);
+          hk.playActivateSound;
+        end;
+
+        mrhDecreaseValue:
+        begin
+          decreaseValue(hk.value);
+          hk.playActivateSound;
+        end;
 
 
         mrhToggleActivationAllowDecrease:
         begin
           allowDecrease:=True;
           active:=not active;
+
+          if active then
+            hk.playActivateSound
+          else
+            hk.playDeactivateSound; //also gives a signal when failing to activate
         end;
 
         mrhToggleActivationAllowIncrease:
         begin
           allowIncrease:=True;
           active:=not active;
+
+          if active then
+            hk.playActivateSound
+          else
+            hk.playDeactivateSound; //also gives a signal when failing to activate
+
         end;
 
-        mrhActivate: active:=true;
-        mrhDeactivate: active:=false;
+        mrhActivate:
+        begin
+          active:=true;
+          if active then
+            hk.playActivateSound;
+        end;
+
+        mrhDeactivate:
+        begin
+          active:=false;
+          if not active then
+            hk.playDeactivateSound;  //also gives a signal when failing to activate
+        end;
 
 
       end;
@@ -1651,12 +2170,23 @@ begin
 
   if result then
   begin
-
     s:=trim(interpretableaddress);
     fIsOffset:=(s<>'') and (s[1] in ['+','-']);
     baseaddress:=a;
   end;
 
+  for i:=0 to offsetCount-1 do
+  begin
+    if offsets[i].unparsed then
+      offsets[i].offsetText:=offsets[i].offsetText;
+
+    if offsets[i].invalid or offsets[i].OnlyUpdateWithReinterpret then
+      offsets[i].forced:=true;
+  end;
+
+
+
+  GetRealAddress;
 
   //update the children
   for i:=0 to count-1 do
@@ -1731,12 +2261,12 @@ function TMemoryRecord.getAddressString: string;
 begin
   GetRealAddress;
 
-  if length(pointeroffsets)>0 then
+  if isPointer then
   begin
     if UnreadablePointer then
-      result:='P->????????'
+      result:=rsPqqqqqqqq
     else
-      result:='P->'+inttohex(realaddress,8);
+      result:=rsP+inttohex(realaddress,8);
   end else
   begin
     if (realaddress=0) and (couldnotinterpretaddress) then
@@ -1851,7 +2381,7 @@ begin
             if showashex then result:=inttohex(customtype.ConvertDataToInteger(buf, RealAddress),8) else if showassigned then result:=inttostr(integer(customtype.ConvertDataToInteger(buf, RealAddress))) else result:=inttostr(customtype.ConvertDataToInteger(buf, RealAddress));
         end
         else
-          result:='error';
+          result:=rsError;
       end;
 
       vtByte : if showashex then result:=inttohex(pb^,2) else if showassigned then result:=inttostr(shortint(pb^)) else result:=inttostr(pb^);
@@ -1868,10 +2398,10 @@ begin
         if Extra.stringData.unicode then
         begin
           pba[bufsize-2]:=0;
-          result:={ansitoutf8}(wc);
+          result:=UTF16ToUTF8(wc)
         end
         else
-          result:={ansitoutf8}(c);
+          result:=c;
       end;
 
       vtByteArray:
@@ -2155,26 +2685,24 @@ begin
         if extra.stringData.unicode then
           x:=bufsize div 2; //each character is 2 bytes so only half the size is available
 
-        if Extra.stringData.ZeroTerminate then
-          x:=min(length(currentValue)+1,x) //also copy the zero terminator
-        else
-          x:=min(length(currentValue),x);
+
 
 
         tempsw:=currentvalue;
         tempsa:=currentvalue;
 
+
+
         //copy the string to the buffer
-        for i:=0 to x-1 do
+        if extra.stringData.unicode then
         begin
-          if extra.stringData.unicode then
-          begin
-            wc[i]:=pwidechar(tempsw)[i];
-          end
-          else
-          begin
-            c[i]:=pchar(tempsa)[i];
-          end;
+          x:=min(x,length(tempsw));
+          CopyMemory(buf, @tempsw[1], x*2)
+        end
+        else
+        begin
+          x:=min(x,length(tempsa));
+          CopyMemory(buf, @tempsa[1], x);
         end;
 
         if extra.stringData.unicode then
@@ -2239,20 +2767,40 @@ var
   check: boolean;
   realaddress, realaddress2: PtrUInt;
   i: integer;
-  count: dword;
+  count: ptruint;
+  o: integer;
 begin
   realAddress:=0;
-  realAddress2:=0;
 
-  if length(pointeroffsets)>0 then //it's a pointer
+  if isPointer then //it's a pointer
   begin
-    //find the address this pointer points to
-    result:=getPointerAddress(getBaseAddress, pointeroffsets, UnreadablePointer);
-    if UnreadablePointer then
+    realAddress2:=getBaseAddress;
+
+    for i:=offsetCount-1 downto 0 do
     begin
-      realAddress:=0;
-      result:=0;
+      check:=readprocessmemory(processhandle,pointer(realaddress2),@realaddress,processhandler.pointersize,count);
+      if check and (count=processhandler.pointersize) then
+      begin
+        o:=offsets[i].getOffset(realaddress);
+        if not offsets[i].invalid then
+          realaddress2:=realaddress+o
+        else
+        begin
+          UnreadablePointer:=true;
+          self.RealAddress:=0;
+          exit(0);
+        end;
+      end
+      else
+      begin
+        UnreadablePointer:=true;
+        self.RealAddress:=0;
+        exit(0);
+      end;
     end;
+
+    UnreadablePointer:=false;
+    result:=realaddress2;
   end
   else
     result:=getBaseAddress; //not a pointer
@@ -2267,14 +2815,14 @@ begin
   //type TMemrecHotkeyAction=(mrhToggleActivation, mrhToggleActivationAllowIncrease, mrhToggleActivationAllowDecrease, mrhSetValue,
   //mrhIncreaseValue, mrhDecreaseValue);
   case action of
-    mrhToggleActivation: result:='Toggle Activation';
-    mrhToggleActivationAllowIncrease: result:='Toggle Activation Allow Increase';
-    mrhToggleActivationAllowDecrease: result:='Toggle Activation Allow Decrease';
-    mrhActivate: result:='Activate';
-    mrhDeactivate: result:='Deactivate';
-    mrhSetValue: result:='Set Value';
-    mrhIncreaseValue: result:='Increase Value';
-    mrhDecreaseValue: result:='Decrease Value';
+    mrhToggleActivation: result:=rsToggleActivation;
+    mrhToggleActivationAllowIncrease: result:=rsToggleActivationAllowIncrease;
+    mrhToggleActivationAllowDecrease: result:=rsToggleActivationAllowDecrease;
+    mrhActivate: result:=rsActivate;
+    mrhDeactivate: result:=rsDeactivate;
+    mrhSetValue: result:=rsSetValue;
+    mrhIncreaseValue: result:=rsIncreaseValue;
+    mrhDecreaseValue: result:=rsDecreaseValue;
   end;
 end;
 

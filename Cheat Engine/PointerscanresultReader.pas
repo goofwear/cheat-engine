@@ -12,6 +12,7 @@ uses windows, LCLIntf, sysutils, classes, CEFuncProc, NewKernelHandler, symbolha
 resourcestring
   rsPSRCorruptedPointerscanFile = 'Corrupted pointerscan file';
   rsPSRInvalidPointerscanFileVersion = 'Invalid pointerscan file version';
+  rsBuggedList = 'BuggedList';
 
 function GetFileSizeEx(hFile:HANDLE; FileSize:PQWord):BOOL; stdcall; external 'kernel32.dll' name 'GetFileSizeEx';
 
@@ -68,6 +69,8 @@ type
     fEndsWithOffsetList: array of dword;
 
     fCanResume: boolean;
+    fdidBaseRangeScan: boolean;
+    foriginalBaseScanRange: qword;
 
 
     CompressedPointerScanResult: PPointerscanResult;
@@ -94,6 +97,9 @@ type
     function getPointer(i: qword): PPointerscanResult; overload;
     function getPointer(i: qword; var pointsto: ptrUint): PPointerscanResult; overload;
     procedure getFileList(list: TStrings);
+
+    procedure ReleaseFiles;
+
     constructor create(filename: string; original: TPointerscanresultReader=nil);
 
     destructor destroy; override;
@@ -102,6 +108,7 @@ type
     property filename: string read FFilename;
     property entrySize: integer read sizeOfEntry;
     property modulelistCount: integer read getModuleListcount;
+    property modulename[index: integer]: string read getModuleName;
     property modulebase[index: integer]: ptruint read getModuleBase write setModuleBase;
     property mergedresultcount: integer read getMergedResultCount;
     property mergedresults[index: integer]: integer read getMergedResult;
@@ -116,13 +123,16 @@ type
     property MaxBitCountOffset: dword read fMaxBitCountOffset;
     property LastRawPointer: pointer read fLastRawPointer;
     property CanResume: boolean read fCanResume;
+    property DidBaseRangeScan: boolean read fdidBaseRangeScan;
+    property BaseScanRange: qword read foriginalBaseScanRange;
 end;
 
 procedure findAllResultFilesForThisPtr(filename: string; rs: TStrings);
 
 implementation
 
-uses ProcessHandlerUnit, PointerscanStructures;
+uses ProcessHandlerUnit, PointerscanStructures, Maps, AvgLvlTree;
+
 
 procedure findAllResultFilesForThisPtr(filename: string; rs: TStrings);
 var
@@ -136,65 +146,56 @@ var
   sepindex: integer;
   temp: string;
   swap: boolean;
+
+  filemap: TMap;
+
+  f: string;
+  fn: pchar;
+
+  path: string;
+
+
+  it: TMapIterator;
 begin
   //search the folder this ptr file is in for .result.* files
   //extract1
+
+  filemap:=TMap.Create(its8, sizeof(pointer));
+
+  path:=ExtractFilePath(filename);
+
   if FindFirst(filename+'.results.*', 0, fr)=0 then
   begin
     repeat
-      rs.add(extractfilepath(filename)+fr.Name);
+      ext1:=ExtractFileExt(fr.name);
+      ext1:=copy(ext1, 2, length(ext1)-1);
+
+      if TryStrToInt64('$'+ext1, v1) then
+      begin
+        f:=path+fr.name;
+        getmem(fn, length(f)+1);
+        strcopy(fn, @f[1]);
+
+        filemap.Add(v1, fn);
+      end;
     until FindNext(fr)<>0;
 
     FindClose(fr);
   end;
 
-  //sort the results based on the extension
-  //keep in mind that base address sorting has as extention "moduleid-offset"
-  if rs.count>0 then
+  it:=TMapIterator.Create(filemap);
+  it.First;
+  while not it.EOM do
   begin
-  {  basesort:=pos('-', ExtractFileExt(rs[0]))>0;     }
-
-    try
-      for i:=0 to rs.count-2 do
-      begin
-        ext1:=ExtractFileExt(rs[i]);
-        ext1:=copy(ext1, 2, length(ext1)-1);
-
-        v1:=StrToInt64('$'+ext1);
-
-        for j:=i+1 to rs.count-1 do
-        begin
-          ext2:=ExtractFileExt(rs[j]);
-          ext2:=copy(ext2, 2, length(ext2)-1);
-
-          swap:=false;
-
-          v2:=StrToInt64('$'+ext2);
-          if v1>v2 then
-            swap:=true;
-
-          if swap then
-          begin
-            temp:=rs[i];
-            rs[i]:=rs[j];
-            rs[j]:=temp;
-            v1:=v2;
-          end;
-
-
-
-        end;
-      end;
-    except
-      //one of these could not be interpreted as a proper hexadecimal offset, so no need to sort, it's unsorted
-      beep;
-    end;
-
+    it.GetData(fn);
+    rs.add(fn);
+    freemem(fn);
+    it.Next;
   end;
 
- // showmessage(rs.text);
-
-
+  it.free;
+  filemap.Clear;
+  filemap.Free;
 
 end;
 
@@ -357,7 +358,7 @@ begin
   if (modulenr>=0) and (modulenr<modulelist.Count) then
     result:=modulelist[modulenr]
   else
-    result:='BuggedList';
+    result:=rsBuggedList;
 end;
 
 function TPointerscanresultReader.getPointer(i: uint64): PPointerscanResult;
@@ -513,6 +514,8 @@ begin
     list.add(files[i].FileName);
 end;
 
+
+
 constructor TPointerscanresultReader.create(filename: string; original: TPointerscanresultReader=nil);
 var
   configfile: TFileStream;
@@ -532,6 +535,8 @@ var
 
   fnames: tstringlist;
 
+  pscanversion: byte;
+
 begin
   FFilename:=filename;
   configfile:=TFileStream.Create(filename, fmOpenRead or fmShareDenyWrite);
@@ -539,7 +544,8 @@ begin
   if configfile.ReadByte<>$ce then
     raise exception.create(rsPSRCorruptedPointerscanFile);
 
-  if configfile.ReadByte<>pointerscanfileversion then
+  pscanversion:=configfile.ReadByte;
+  if pscanversion>pointerscanfileversion then
     raise exception.create(rsPSRInvalidPointerscanFileVersion);
 
   configfile.ReadBuffer(modulelistlength,sizeof(modulelistlength));
@@ -591,8 +597,9 @@ begin
   //read maxlevel
   configfile.Read(maxlevel,sizeof(maxlevel));
 
-  //read compressedptr info
 
+
+  //read compressedptr info
   fCompressedPtr:=configfile.ReadByte=1;
   if fCompressedPtr then
   begin
@@ -620,12 +627,17 @@ begin
 
     getmem(CompressedPointerScanResult, 16+4*maxlevel);
     getmem(CompressedTempBuffer, sizeofentry+4);
-
-
   end
   else
   begin
     sizeofentry:=16+(4*maxlevel)
+  end;
+
+  if pscanversion>=2 then
+  begin
+    fdidBaseRangeScan:=configFile.readByte=1;
+    if fdidBaseRangeScan then
+      foriginalBaseScanRange:=configfile.ReadQWord;
   end;
 
 
@@ -633,6 +645,7 @@ begin
 
   //get the filenames
   fnames:=tstringlist.create;
+
   findAllResultFilesForThisPtr(filename, fnames);
   setlength(filenames, fnames.count);
   for i:=0 to fnames.count-1 do
@@ -704,6 +717,20 @@ begin
   fCanResume:=fileexists(filename+'.resume.config') and fileexists(filename+'.resume.scandata') and fileexists(filename+'.resume.queue');
 end;
 
+procedure TPointerscanresultReader.ReleaseFiles;
+//if only the config file is needed. This releases the results
+var i: integer;
+begin
+  for i:=0 to length(files)-1 do
+    if files[i].f<>0 then
+    begin
+      if files[i].fm<>0 then
+        closehandle(files[i].fm);
+
+      closehandle(files[i].f);
+    end;
+end;
+
 destructor TPointerscanresultReader.destroy;
 var i: integer;
 begin
@@ -713,14 +740,7 @@ begin
   if cache2<>nil then
     UnmapViewOfFile(cache2);
 
-  for i:=0 to length(files)-1 do
-    if files[i].f<>0 then
-    begin
-      if files[i].fm<>0 then
-        closehandle(files[i].fm);
-
-      closehandle(files[i].f);
-    end;
+  ReleaseFiles;
 
   if compressedTempBuffer<>nil then
     freemem(compressedTempBuffer);

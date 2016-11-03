@@ -15,12 +15,13 @@ uses windows, forms, LCLIntf,registry, SysUtils,AdvancedOptionsUnit,CommentsUnit
      zstream, luafile, disassemblerComments, commonTypeDefs;
 
 
-var CurrentTableVersion: dword=19;
+var CurrentTableVersion: dword=24;
 procedure protecttrainer(filename: string);
 procedure unprotecttrainer(filename: string; stream: TStream);
 procedure SaveTable(Filename: string; protect: boolean=false);
 procedure LoadTable(Filename: string;merge: boolean);
 procedure SaveCEM(Filename:string;address:ptrUint; size:dword);
+procedure LoadXML(doc: TXMLDocument; merge: boolean; isTrainer: boolean=false);
 
 {procedure LoadExe(filename: string);}
 
@@ -767,8 +768,9 @@ begin
       memfile.WriteBuffer(buf^,size);
     end else messagedlg(Format(rsTheRegionAtWasPartiallyOrCompletlyUnreadable, [IntToHex(address, 8)]), mterror, [mbok], 0);
   finally
-    memfile.free;
+    freeandnil(memfile);
     freemem(buf);
+    buf:=nil;
   end;
 end;
 
@@ -801,7 +803,10 @@ begin
     end else raise exception.Create(Format(rsDoesnTContainNeededInformationWhereToPlaceTheMemor, [filename]));
   finally
     freemem(check);
+    check:=nil;
+
     memfile.free;
+    memfile:=nil;
   end;
 end;
 
@@ -897,6 +902,8 @@ var
     doc: TXMLDocument;
     workdir: string;
 begin
+  if mainform.addresslist=nil then exit;
+
   if fileexists(filename)=false then
     filename:=UTF8ToSys(filename); //fix chinese problems I hope
 
@@ -1229,6 +1236,7 @@ begin
         end;
       finally
         freemem(b);
+        b:=nil;
       end;
     end;
   end
@@ -1252,11 +1260,15 @@ begin
 
     finally
       freemem(b);
+      b:=nil;
     end;
   end;
 
-  d.free;
-  f.free;
+  if d<>nil then
+    freeandnil(d);
+
+  if f<>nil then
+    freeandnil(f);
 end;
 
 procedure protecttrainer(filename: string);
@@ -1287,8 +1299,8 @@ begin
   i:=f.size;
   c.write(i, sizeof(i));
   c.write(f.Memory^, f.size);
-  c.free;
-  f.free;
+  freeandnil(c);
+  freeandnil(f);
 
 
   k:=$ce;
@@ -1309,7 +1321,7 @@ begin
 
   f2.SaveToFile(filename);
 
-  f2.free;
+  freeandnil(f2);
 end;
 
 

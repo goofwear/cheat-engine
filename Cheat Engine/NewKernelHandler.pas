@@ -783,7 +783,7 @@ resourcestring
   rsTheDriverNeedsToBeLoadedToBeAbleToUseThisFunction = 'The driver needs to be loaded to be able to use this function.';
   rsYourCpuMustBeAbleToRunDbvmToUseThisFunction = 'Your cpu must be able to run dbvm to use this function';
   rsCouldnTBeOpened = '%s couldn''t be opened';
-
+  rsDBVMIsNotLoadedThisFeatureIsNotUsable = 'DBVM is not loaded. This feature is not usable';
 
 
 
@@ -794,6 +794,7 @@ var
   x: PTRUINT;
 
 begin
+  wle:=nil;
   if logWrites then
   begin
     if nsize<64*1024*1024 then
@@ -810,7 +811,7 @@ begin
   end;
 
   result:=WriteProcessMemoryActual(hProcess, lpBaseAddress, lpbuffer, nSize, lpNumberOfBytesWritten);
-  if result and logwrites then
+  if result and logwrites and (wle<>nil) then
   begin
     getmem(wle^.newbytes, lpNumberOfBytesWritten);
     ReadProcessMemory(hProcess, lpBaseaddress,wle^.newbytes, lpNumberOfBytesWritten, x);
@@ -889,7 +890,7 @@ begin
     end;
 
     if not isRunningDBVM then
-      raise exception.create('DBVM is not loaded. This feature is not usable');
+      raise exception.create(rsDBVMIsNotLoadedThisFeatureIsNotUsable);
   end;
 {$endif}
 
@@ -898,6 +899,8 @@ end;
 function loaddbvmifneeded: BOOL;  stdcall;
 var signed: BOOL;
 begin
+  result:=false;
+
 {$ifndef JNI}
   loaddbk32;
   if assigned(isDriverLoaded) then
@@ -1470,6 +1473,7 @@ begin
     mapsline:=mappedfilename;
 
     freemem(mappedfilename);
+    mappedfilename:=nil;
   end;
 end;
 {$endif}
@@ -1481,7 +1485,7 @@ begin
   mapsline:='';
 end;
 
-var x: string;
+var
   psa: thandle;
   u32: thandle;
 

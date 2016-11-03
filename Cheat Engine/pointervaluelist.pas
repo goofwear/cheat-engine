@@ -21,7 +21,7 @@ type
   PStaticData=^TStaticData;
   TStaticData=record
     moduleindex: dword; //for searching the saved modulelist
-    offset: integer; //no need to convert this to a ptrUint, max size of an executable is still 4GB in 64-bit
+    offset: PtrInt; //converted from integer to ptrint as static addresses can point to high values as well.(Interpret as unsigned when moduleindex=-1)
   end;
 
   TPointerDataArray=array [0..0] of record
@@ -401,9 +401,9 @@ begin
     if isStatic(pointerwiththisvalue, mi, moduleindex) then
     begin
       //it's a static, so create and fill in the static data
-      plist.list[plist.pos].staticdata:=bigalloc.alloc(sizeof(TStaticData));
-      plist.list[plist.pos].staticdata.moduleindex:=moduleindex;
-      plist.list[plist.pos].staticdata.offset:=pointerwiththisvalue-mi.baseaddress;
+      plist^.list[plist.pos].staticdata:=bigalloc.alloc(sizeof(TStaticData));
+      plist^.list[plist.pos].staticdata.moduleindex:=moduleindex;
+      plist^.list[plist.pos].staticdata.offset:=pointerwiththisvalue-mi.baseaddress;
     end
     else
       plist.list[plist.pos].staticdata:=nil;
@@ -523,6 +523,7 @@ The pointer was not found exactly, but we are in an addresslist that has been al
 var i: integer;
 begin
   //first try the top
+  result:=nil;
 
   for i:=entrynr+1 to $F do
   begin
@@ -1207,7 +1208,7 @@ begin
             begin
 
 
-              if (alligned and ((qwordpointer^ mod 8)=0) and ispointer(qwordpointer^)) or
+              if (alligned and ((qwordpointer^ mod 4)=0) and ispointer(qwordpointer^)) or
                  ((not alligned) and ispointer(qwordpointer^) ) then
               begin
                 valid:=true;
@@ -1239,7 +1240,7 @@ begin
               end;
 
               if alligned then
-                inc(qwordpointer)
+                inc(dwordpointer) //increases qwordpointer
               else
                 inc(bytepointer);
             end;
@@ -1311,7 +1312,7 @@ begin
             begin
 
 
-              if (alligned and ((qwordpointer^ mod 8)=0) and ispointer(qwordpointer^)) or
+              if (alligned and ((qwordpointer^ mod 4)=0) and ispointer(qwordpointer^)) or
                  ((not alligned) and ispointer(qwordpointer^) ) then
               begin
                 //initial add
@@ -1347,7 +1348,7 @@ begin
               end;
 
               if alligned then
-                inc(qwordpointer) //increase with 8
+                inc(dwordpointer) //increase with 4
               else
                 inc(bytepointer);
             end;

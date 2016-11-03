@@ -54,7 +54,8 @@ type
     procedure DeleteEntry(sender: TObject);
     procedure FilenameUpdate(sender: TObject);
     function AddEntry: TPointerFileEntry;
-    procedure Organize;
+  private
+    procedure AdjustPos(sender: tobject);
   public
     constructor create(imagelist: TImageList; AOwner: TComponent; w: integer);
     destructor destroy; override;
@@ -88,12 +89,20 @@ type
   { TfrmPointerScannerSettings }
 
   TfrmPointerScannerSettings = class(TForm)
+    btnCancel: TButton;
+    btnOk: TButton;
     cbAcceptNonModuleVtable: TCheckBox;
     CbAlligned: TCheckBox;
+    cbAllowRuntimeWorkers: TCheckBox;
     cbClassPointersOnly: TCheckBox;
     cbCompressedPointerscanFile: TCheckBox;
+    cbConnectToNode: TCheckBox;
     cbHeapOnly: TCheckBox;
+    cbIncludeSystemModules: TCheckBox;
+    cbLimitScanToRegionFile: TCheckBox;
     cbMaxOffsetsPerNode: TCheckBox;
+    cbMustEndWithSpecificOffset: TCheckBox;
+    cbMustStartWithBase: TCheckBox;
     cbNoLoop: TCheckBox;
     cbNoReadOnly: TCheckBox;
     cbOnlyOneStatic: TCheckBox;
@@ -102,45 +111,50 @@ type
     cbStaticStacks: TCheckBox;
     cbUseHeapData: TCheckBox;
     cbUseLoadedPointermap: TCheckBox;
-    cbAllowRuntimeWorkers: TCheckBox;
-    cbConnectToNode: TCheckBox;
-    cbMustStartWithBase: TCheckBox;
     cbCompareToOtherPointermaps: TCheckBox;
     cbShowAdvancedOptions: TCheckBox;
     cbAddress: TComboBox;
-    cbIncludeSystemModules: TCheckBox;
-    cbLimitScanToRegionFile: TCheckBox;
+    ComboBox1: TComboBox;
+    editMaxLevel: TEdit;
+    editStructsize: TEdit;
+    edtBaseFrom: TEdit;
+    edtBaseTo: TEdit;
     edtDistributedPassword: TEdit;
     edtDistributedPort: TEdit;
     edtMaxOffsetsPerNode: TEdit;
     edtReverseStart: TEdit;
     edtReverseStop: TEdit;
     edtStackSize: TEdit;
+    edtThreadcount: TEdit;
     edtThreadStacks: TEdit;
     il: TImageList;
     Label1: TLabel;
     Label10: TLabel;
     Label11: TLabel;
+    Label12: TLabel;
     Label13: TLabel;
+    Label2: TLabel;
+    Label3: TLabel;
+    Label4: TLabel;
+    Label9: TLabel;
     lblNumberOfStackThreads: TLabel;
     lblPort: TLabel;
     lblStackSize: TLabel;
     odLoadPointermap: TOpenDialog;
     odLoadRegionFile: TOpenDialog;
-    Panel3: TPanel;
-    cbMustEndWithSpecificOffset: TCheckBox;
     Panel1: TPanel;
-    Label3: TLabel;
-    Label12: TLabel;
-    Label9: TLabel;
-    btnOk: TButton;
-    editStructsize: TEdit;
-    editMaxLevel: TEdit;
-    btnCancel: TButton;
-    edtThreadcount: TEdit;
-    ComboBox1: TComboBox;
+    Panel10: TPanel;
+    Panel11: TPanel;
+    Panel12: TPanel;
+    Panel3: TPanel;
     cbValueType: TComboBox;
     Panel2: TPanel;
+    Panel4: TPanel;
+    Panel5: TPanel;
+    Panel6: TPanel;
+    Panel7: TPanel;
+    Panel8: TPanel;
+    Panel9: TPanel;
     rbGeneratePointermap: TRadioButton;
     rbFindAddress: TRadioButton;
     rbFindValue: TRadioButton;
@@ -156,6 +170,7 @@ type
     procedure cbMaxOffsetsPerNodeChange(Sender: TObject);
     procedure cbMustEndWithSpecificOffsetChange(Sender: TObject);
     procedure cbShowAdvancedOptionsChange(Sender: TObject);
+    procedure cbStaticOnlyChange(Sender: TObject);
     procedure cbStaticStacksChange(Sender: TObject);
     procedure cbUseLoadedPointermapChange(Sender: TObject);
     procedure cbCompareToOtherPointermapsChange(Sender: TObject);
@@ -172,11 +187,6 @@ type
     { Private declarations }
     //iplist: tstringlist;
     firstshow: boolean;
-
-    edtBaseFrom: TEdit;
-    edtBaseTo: TEdit;
-    lblBaseFrom: TLabel;
-    lblBaseTo: TLabel;
 
     mainaddressList: TStringlist;
 
@@ -249,7 +259,7 @@ resourcestring
   strMaxOffsetsIsStupid = 'Sorry, but the max offsets should be 1 or higher, or else disable the checkbox'; //'Are you a fucking retard?';
   rsUseLoadedPointermap = 'Use saved pointermap';
 
-  rsNoCompareFiles = 'You will get billions of useless results and giga/terrabytes of wasted diskspace if you do not use the compare results option. Are you sure ?';
+  rsNoCompareFiles = 'You will get billions of useless results and giga/terrabytes of wasted diskspace if you do not use the compare results with other saved pointermap option. Are you sure ?';
   rsSelectAFile = '<Select a file>';
   rsScandataFilter = 'All files (*.*)|*.*|Scan Data (*.scandata)|*.scandata';
   rsReusedTheSameFile = 'This file is already in the list of scandata files to be used'; //alternatively: 'For fucks sake dude. You already picked this file. Pick something else!'
@@ -284,6 +294,8 @@ begin
     maxwidth:=max(maxwidth, combobox.Canvas.TextWidth(list[i]));
   end;
 
+  combobox.DropDownCount:=max(16, combobox.Items.Count);
+
   SendMessage(combobox.Handle, CB_SETDROPPEDWIDTH, maxwidth+10, 0);
 end;
 
@@ -311,6 +323,8 @@ constructor TPointerFileEntry.create(imagelist: TImageList; AOwner: TComponent);
 var bm: tbitmap;
 begin
   inherited create(Aowner);
+
+  AutoSize:=true;
 
   fimagelist:=imagelist;
 
@@ -342,12 +356,14 @@ begin
   cbAddress.parent:=self;
   cbAddress.AnchorSideRight.Control:=btnDelete;
   cbAddress.AnchorSideRight.side:=asrLeft;
-  cbAddress.clientwidth:=tcustomform(aowner).canvas.TextWidth('DDDDDDDDDDDD');
+  cbAddress.Constraints.MinWidth:=TPointerFileList(aowner).canvas.TextWidth('DDDDDDDDDDDD');
+  //cbAddress.clientwidth:=tcustomform(aowner).canvas.TextWidth('DDDDDDDDDDDD');
   cbAddress.anchors:=[aktop, akright];
   cbAddress.BorderSpacing.Right:=8;
   cbAddress.style:=csOwnerDrawFixed;
   cbAddress.OnDrawItem:=cbAddressDrawItem;
-  cbAddress.Height:=btnDelete.Height;
+  cbAddress.ItemHeight:=TfrmPointerScannerSettings(TPointerFileList(aowner).Owner).cbAddress.ItemHeight;
+  //cbAddress.Height:=btnDelete.Height;
 
   Addresslist:=tstringlist.create;
   Addresslist.NameValueSeparator:='=';
@@ -369,7 +385,7 @@ begin
 
 
   lblFilename.parent:=self;
-  lblFilename.AutoSize:=false;
+ // lblFilename.AutoSize:=false;
   lblFilename.AnchorSideRight.control:=btnsetfile;
   lblFilename.AnchorSideRight.side:=asrleft;
   lblFilename.AnchorSideLeft.control:=self;
@@ -382,7 +398,7 @@ begin
 
 
   lblfilename.anchors:=[aktop, akleft, akright];
-  lblFilename.Caption:='  '+rsSelectAFile;
+  lblFilename.Caption:=rsSelectAFile;
 
   height:=cbAddress.Height+2;
 
@@ -465,34 +481,13 @@ end;
 
 
 
-procedure TPointerFileList.Organize;
-var
-  i: integer;
-  t: integer;
-
-begin
-  //sort based on the order of the list
-  t:=lblFilenames.top+lblFilenames.height;
-  for i:=0 to entries.count-1 do
-  begin
-    TPointerFileEntry(entries[i]).top:=t;
-    t:=TPointerFileEntry(entries[i]).top+TPointerFileEntry(entries[i]).Height;
-  end;
-
-
-
-  //adjust the height
-  if Entries.count>0 then
-    height:=TPointerFileEntry(entries[entries.count-1]).Top+TPointerFileEntry(entries[entries.count-1]).Height
-  else
-    height:=0;
-
-end;
 
 procedure TPointerFileList.DeleteEntry(sender: TObject);
 var
   e: TPointerFileEntry;
   i: integer;
+
+  before, after: TControl;
 begin
 
   e:=TPointerFileEntry(sender);
@@ -500,10 +495,17 @@ begin
 
   if (i<>0) and (i=entries.count-1) and (TPointerFileEntry(entries[i]).filename='') then exit; //don't delete the last one if there asre entries
 
+  if entries.Count>i+1 then
+  begin
+    before:=e.AnchorSideTop.Control;
+    after:=TPointerFileEntry(entries[i+1]);
+
+    after.AnchorSideTop.Control:=before;
+  end;
+
+
   entries.Delete(i);
   e.Free;
-
-  Organize;
 
   if entries.count=0 then
   begin
@@ -527,20 +529,32 @@ function TPointerFileList.addentry:TPointerFileEntry;
 var e: TPointerFileEntry;
 begin
   e:=TPointerFileEntry.create(fimagelist, self);
+  e.Anchors:=[akTop, akLeft, akRight];
   e.parent:=self;
-  if entries.Count=0 then
-    e.top:=lblFilenames.Top+lblFilenames.height+2
-  else
-    e.top:=TPointerFileEntry(entries[entries.count-1]).Top+TPointerFileEntry(entries[entries.count-1]).Height;
 
-  e.width:=ClientWidth;
+ // e.color:=clBlue;
+
+  if entries.Count=0 then
+    e.AnchorSideTop.Control:=lblFilenames
+  else
+    e.AnchorSideTop.Control:=TPointerFileEntry(entries[entries.count-1]);
+
+  e.AnchorSideTop.side:=asrBottom;
+  e.AnchorSideRight.control:=self;
+  e.AnchorSideRight.Side:=asrRight;
+
+  e.AnchorSideLeft.Control:=self;
+  e.AnchorSideLeft.Side:=asrLeft;
+
+  e.BorderSpacing.Top:=2;
+
   e.OnDelete:=DeleteEntry;
   e.OnSetFileName:=FilenameUpdate;
 
   entries.Add(e);
   result:=e;
 
-  Organize;
+
 end;
 
 function TPointerFileList.getFilename(index: integer): string;
@@ -568,11 +582,28 @@ begin
   result:=entries.count;
 end;
 
+
+procedure TPointerFileList.AdjustPos(sender: tobject);
+var e: TPointerFileEntry;
+begin
+  if entries.count>0 then
+  begin
+    e:=TPointerFileEntry(Entries[0]);
+    lblFilenames.left:=e.lblFilename.Left;
+    lblAddress.left:=e.cbAddress.Left+(e.cbAddress.width div 2)-(lbladdress.width div 2);
+  end;
+end;
+
 constructor TPointerFileList.create(imagelist: TImageList; AOwner: TComponent; w: integer);
 var e: TPointerFileEntry;
 begin
   fimagelist:=imagelist;
   inherited create(AOwner);
+
+
+  autosize:=true;
+
+ // color:=clgreen;
 
   if aowner is twincontrol then
   begin
@@ -592,13 +623,14 @@ begin
   lblAddress.caption:=rsAddress;
   lblAddress.parent:=self;
 
-  lblAddress.top:=0;
-  lblFilenames.top:=0;
+  lblAddress.AnchorSideTop.Control:=self;
+  lblAddress.AnchorSideTop.Side:=asrTop;
+  lblFilenames.AnchorSideTop.Control:=self;
+  lblFilenames.AnchorSideTop.Side:=asrTop;
 
   e:=AddEntry;
 
-  lblFilenames.Left:=e.lblFilename.Left;
-  lblAddress.left:=e.cbAddress.Left+(e.cbAddress.width div 2)-(lblAddress.width div 2);
+  e.OnResize:=AdjustPos;
 end;
 
 destructor TPointerFileList.destroy;
@@ -647,6 +679,7 @@ var
   r: THostResolver;
   p: ptruint;
   comparecount: integer;
+  reg: TRegistry;
 begin
   if cbMaxOffsetsPerNode.checked then
   begin
@@ -682,6 +715,16 @@ begin
     begin
       //bug the user one time about this
       if (not warnedAboutDisablingInstantRescan) and (MessageDlg(rsNoCompareFiles, mtConfirmation, [mbyes, mbno], 0)<>mryes) then
+        exit;
+
+      warnedAboutDisablingInstantRescan:=true;
+    end;
+  end
+  else
+  begin
+    if (cbMustStartWithBase.Checked=false) then
+    begin
+      if  (not warnedAboutDisablingInstantRescan) and (MessageDlg(rsNoCompareFiles, mtConfirmation, [mbyes, mbno], 0)<>mryes) then
         exit;
 
       warnedAboutDisablingInstantRescan:=true;
@@ -789,52 +832,11 @@ end;
 
 procedure TfrmPointerScannerSettings.cbMustStartWithBaseChange(Sender: TObject);
 begin
-  if cbMustStartWithBase.checked then
-  begin
-    //create a 2 text boxes and 2 labels (from - to)
-    edtBaseFrom:=tedit.create(self);
-    edtBaseFrom.Top:=cbMustStartWithBase.top+cbMustStartWithBase.height+3;
-    edtBaseFrom.Left:=edtReverseStart.left;
-    edtBaseFrom.Width:=cbMustStartWithBase.width;
-    edtBaseFrom.parent:=self;
-
-
-    edtBaseTo:=tedit.create(self);
-    edtBaseTo.top:=edtBaseFrom.top+edtbasefrom.height+1;
-    edtbaseto.left:=edtReverseStop.left;
-    edtbaseto.width:=cbMustStartWithBase.width;
-    edtbaseto.parent:=self;
-
-    lblBaseFrom:=tlabel.create(self);
-    lblBaseFrom.Parent:=self;
-    lblbasefrom.Caption:=rsFrom;
-    lblbasefrom.left:=0;
-    lblbasefrom.top:=edtbasefrom.top+(edtbasefrom.height div 2) - (lblbasefrom.height div 2);
-
-    lblBaseTo:=tlabel.create(self);
-    lblBaseTo.Parent:=self;
-    lblBaseTo.Caption:=rsTo;
-    lblBaseTo.left:=0;
-    lblBaseTo.top:=edtbaseto.top+(edtbaseto.height div 2) - (lblBaseTo.height div 2);
-
-
-    cbStaticOnly.checked:=true;
-    cbStaticOnly.enabled:=false;
-  end
-  else
-  begin
-    //destroy the edit boxes and labels
-
-    freeandnil(edtbasefrom);
-    freeandnil(edtbaseto);
-    freeandnil(lblbasefrom);
-    freeandnil(lblbaseto);
-
-
-    cbStaticOnly.enabled:=true;
-  end;
-
+  panel12.visible:=cbMustStartWithBase.checked;
   updatepositions;
+
+  if cbMustStartWithBase.checked then
+    cbStaticOnly.Checked:=true;
 end;
 
 procedure TfrmPointerScannerSettings.iplistResize(Sender: TObject);
@@ -870,6 +872,7 @@ end;
 
 procedure TfrmPointerScannerSettings.cbMustEndWithSpecificOffsetChange(Sender: TObject);
 var offsetentry: TOffsetEntry;
+  i: integer;
 begin
   //create an offset entry
   if (sender as tcheckbox).Checked then //create the first one and the add button
@@ -883,10 +886,13 @@ begin
     with offsetentry do
     begin
       offsetentry.Name:='edtOffset'+inttostr(offsetlist.Count);
-      top:=panel1.top;
-      left:=cbMustEndWithSpecificOffset.left+15;
-      self.Height:=self.Height+height+2;
-      parent:=self;
+      AnchorSideTop.Control:=cbMustEndWithSpecificOffset;
+      AnchorSideTop.Side:=asrBottom;
+      AnchorSideLeft.Control:=cbMustEndWithSpecificOffset;
+      AnchorSideLeft.Side:=asrLeft;
+      BorderSpacing.Left:=15;
+
+      parent:=panel10;
     end;
 
     if lblInfoLastOffset=nil then
@@ -895,8 +901,11 @@ begin
     with lblInfoLastOffset do
     begin
       caption:=rsLastOffset;
-      left:=offsetentry.Left+offsetentry.Width+5;
-      parent:=self;
+      AnchorSideLeft.Control:=offsetentry;
+      AnchorSideLeft.Side:=asrRight;
+      BorderSpacing.Left:=5;
+
+      parent:=panel10;
       visible:=false;
     end;
 
@@ -907,11 +916,16 @@ begin
     begin
       name:='btnAddOffset';
       caption:=rsAdd;
-      left:=offsetentry.Left+offsetentry.Width+3;
-      width:=60;
-      height:=offsetentry.Height;
-      top:=offsetentry.top;
-      parent:=self;
+      AnchorSideLeft.Control:=offsetentry;
+      AnchorSideLeft.Side:=asrRight;
+      AnchorSideTop.Control:=offsetentry;
+      AnchorSideTop.Side:=asrTop;
+
+      BorderSpacing.Left:=3;
+      constraints.MinWidth:=60;
+      autosize:=true;
+
+      parent:=panel10;
       onclick:=btnAddClick;
       visible:=true;
     end;
@@ -923,17 +937,25 @@ begin
     begin
       name:='btnRemoveOffset';
       caption:=rsRemove;
-      left:=btnAddOffset.Left+btnAddOffset.Width+3;
-      width:=60;
-      height:=offsetentry.Height;
-      top:=offsetentry.top;
-      parent:=self;
+      AnchorSideLeft.Control:=btnAddOffset;
+      AnchorSideLeft.Side:=asrRight;
+      AnchorSideTop.Control:=btnAddOffset;
+      AnchorSideTop.Side:=asrTop;
+      BorderSpacing.Left:=3;
+
+      constraints.MinWidth:=60;
+      autosize:=true;
+
+      parent:=panel10;
       onclick:=btnRemoveClick;
       visible:=true;
     end;
 
-
-
+    btnAddOffset.AutoSize:=false;
+    btnRemoveOffset.autosize:=false;
+    i:=max(btnAddOffset.Width, btnRemoveOffset.width);
+    btnAddOffset.Width:=i;
+    btnRemoveOffset.Width:=i;
 
   end
   else
@@ -950,11 +972,16 @@ begin
 
 end;
 
-procedure TfrmPointerScannerSettings.cbShowAdvancedOptionsChange(Sender: TObject
-  );
+procedure TfrmPointerScannerSettings.cbShowAdvancedOptionsChange(Sender: TObject);
 begin
   panel3.visible:=cbShowAdvancedOptions.checked;
   updatepositions;
+end;
+
+procedure TfrmPointerScannerSettings.cbStaticOnlyChange(Sender: TObject);
+begin
+  if cbStaticOnly.Checked=false then
+    cbMustStartWithBase.Checked:=false;
 end;
 
 procedure TfrmPointerScannerSettings.cbLimitScanToRegionFileChange(
@@ -1026,32 +1053,41 @@ procedure TfrmPointerScannerSettings.cbCompareToOtherPointermapsChange(Sender: T
 begin
   if cbCompareToOtherPointermaps.checked then
   begin
-    pdatafilelist:=TPointerFileList.create(il, self, cbAllowRuntimeWorkers.left-cbCompareToOtherPointermaps.left-8);
-    pdatafilelist.top:=cbCompareToOtherPointermaps.top+cbCompareToOtherPointermaps.height;
-    pdatafilelist.left:=cbCompareToOtherPointermaps.left;
+    pdatafilelist:=TPointerFileList.create(il, self, cbShowAdvancedOptions.left-cbCompareToOtherPointermaps.left-8);
+    pdatafilelist.AnchorSideTop.Control:=cbCompareToOtherPointermaps;
+    pdatafilelist.AnchorSideTop.Side:=asrBottom;
+    pdatafilelist.AnchorSideLeft.Control:=cbCompareToOtherPointermaps;
+    pdatafilelist.AnchorSideLeft.Side:=asrLeft;
+
+    pdatafilelist.AnchorSideRight.Control:=cbShowAdvancedOptions;
+    pdatafilelist.AnchorSideRight.Side:=asrLeft;
 
     pdatafilelist.OnEmptyList:=PointerFileListEmpty;
     pdatafilelist.OnResize:=PointerFileListResize;
+
+    pdatafilelist.Anchors:=[akTop, akLeft, akRight];
+
+    pdatafilelist.AutoSize:=true;
+
+    panel3.AnchorSideTop.Control:=pdatafilelist;
+    panel3.AnchorSideTop.Side:=asrBottom;
+    panel3.BorderSpacing.Top:=50;;
   end
   else
   begin
-   { if (not warnedAboutDisablingInstantRescan) and (MessageDlg(rsNoCompareFiles, mtConfirmation, [mbyes, mbno], 0)<>mryes) then
-    begin
-      cbCompareToOtherPointermaps.OnChange:=nil;
-      cbCompareToOtherPointermaps.checked:=true;
-      cbCompareToOtherPointermaps.OnChange:=cbCompareToOtherPointermapsChange;
-      exit;
-    end; }
-
     warnedAboutDisablingInstantRescan:=true;
     pdatafilelist.OnResize:=nil;
     pdatafilelist.OnEmptyList:=nil;
     pdatafilelist.visible:=false;
     pdatafilelist.free;
     pdatafilelist:=nil;
+
+    panel3.AnchorSideTop.Control:=cbCompareToOtherPointermaps;
+    panel3.AnchorSideTop.Side:=asrBottom;
+        panel3.BorderSpacing.Top:=0;;
   end;
 
-  UpdateGuiBasedOnSavedPointerScanUsage;
+  //UpdateGuiBasedOnSavedPointerScanUsage;
   updatepositions;
 end;
 
@@ -1121,8 +1157,13 @@ end;
 procedure TfrmPointerScannerSettings.FormShow(Sender: TObject);
 var
   cpucount: integer;
+  i: integer;
 begin
   cpucount:=GetCPUCount;
+
+  i:=max(label4.width, label2.width);
+  edtBaseFrom.Width:=cbMustStartWithBase.width-i;
+  edtBaseTo.Width:=cbMustStartWithBase.width-i;
 
   //assumption: when a core with hyperthreading core is running at 100% it's hyperthreaded processor will be running at 90%
   //This means that 10 cores are needed to provide an equivalent for one extra core when hyperthreading is used
@@ -1141,7 +1182,6 @@ begin
   //check what type of process it is
   if processhandler.is64Bit then
   begin
-    edtReverseStart.Width:=160;
     edtReverseStart.maxlength:=16;
     edtReverseStop.MaxLength:=edtReverseStart.MaxLength;
 
@@ -1156,10 +1196,6 @@ begin
   end
   else
   begin
-    edtReverseStart.Width:=80;
-
-
-
     //if it's not edited by the user, then fill in the default ranges for 32-bit
     if edtReverseStart.text='0000000000000000' then
       edtReverseStart.text:='00000000';
@@ -1176,15 +1212,19 @@ begin
     edtReverseStop.MaxLength:=edtReverseStart.MaxLength;
   end;
 
+  i:=max(edtReverseStart.clientwidth, max(canvas.TextWidth(edtReverseStart.text), canvas.TextWidth(edtReverseStop.text)))+8;
+  edtReverseStart.clientwidth:=i;
+  edtReverseStop.clientwidth:=i;
 
-  edtReverseStop.Width:=edtReverseStart.width;
+  i:=max(canvas.TextWidth(editStructsize.text), editStructsize.width)+4;
+  editStructsize.clientwidth:=i;
 
+  i:=max(btnOk.width, btnCancel.width);
+  btnok.autosize:=false;
+  btnCancel.autosize:=false;
+  btnok.width:=i;
+  btnCancel.width:=i;
 
- { if firstshow then
-  begin
-    cbCompareToOtherPointermaps.checked:=true;
-//    updatepositions;
-  end;}
 
   firstshow:=false;
 
@@ -1199,8 +1239,7 @@ begin
     MainForm.addresslist.getAddressList(tstrings(cbAddress.tag));
 
   UpdateAddressList(cbAddress);
-
-  updatepositions;
+  cbAddress.ItemHeight:=cbValueType.ItemHeight;
 end;
 
 procedure TfrmPointerScannerSettings.FormCreate(Sender: TObject);
@@ -1224,15 +1263,13 @@ begin
 
   ComboBox1.itemindex:=3;
 
-  clientheight:=cbMustEndWithSpecificOffset.top+cbMustEndWithSpecificOffset.Height+2+panel1.height;
-
-  iplist:=TIpList.create(self);
+  iplist:=TIpList.create(panel11);
 
   iplist.AnchorSideLeft.Control:=cbConnectToNode;
   iplist.AnchorSideLeft.side:=asrLeft;
   iplist.AnchorSideTop.Control:=cbConnectToNode;
   iplist.AnchorSideTop.Side:=asrBottom;
-  iplist.AnchorSideRight.Control:=self;
+  iplist.AnchorSideRight.Control:=panel11;
   iplist.AnchorSideRight.Side:=asrRight;
   iplist.Anchors:=[akTop, akLeft, akRight];
 
@@ -1280,7 +1317,6 @@ begin
   end;
 
   reg.free;
-
   firstshow:=true;
 
   mainaddressList:=tstringlist.create;
@@ -1291,16 +1327,24 @@ end;
 
 
 procedure tfrmPointerScannerSettings.btnAddClick(sender: TObject);
-var offsetentry: TOffsetEntry;
+var
+  offsetentry: TOffsetEntry;
+  before: TOffsetEntry;
 begin
+  before:=TOffsetEntry(offsetlist[offsetlist.count-1]);
   offsetentry:=TOffsetEntry.Create(self);
   offsetlist.Add(offsetentry);
     
   with offsetentry do
   begin
     offsetentry.Name:='edtOffset'+inttostr(offsetlist.Count);
-    left:=cbMustEndWithSpecificOffset.left+15;
-    parent:=self;
+    AnchorSideLeft.Control:=cbMustEndWithSpecificOffset;
+    AnchorSideLeft.Side:=asrLeft;
+    AnchorSideTop.Control:=before;
+    AnchorSideTop.Side:=asrBottom;
+
+    BorderSpacing.Left:=15;
+    parent:=panel10;
   end;
 
   updatepositions;
@@ -1308,20 +1352,23 @@ begin
   if offsetlist.count=2 then
   begin
     lblInfoLastOffset.visible:=true;
-    lblInfoLastOffset.top:=TOffsetEntry(offsetlist[0]).Top+4;
+    lblInfoLastOffset.AnchorSideTop.Control:=TOffsetEntry(offsetlist[0]);
+    lblInfoLastOffset.AnchorSideTop.Side:=asrCenter;
   end;
 
-  btnAddOffset.top:=offsetentry.top;
-  btnRemoveOffset.top:=btnAddOffset.top;
+  btnAddOffset.AnchorSideTop.Control:=offsetentry;
 end;
 
 procedure tfrmPointerScannerSettings.btnRemoveClick(sender: TObject);
+var before: TOffsetEntry;
 begin
+
+
   offsetlist.delete(offsetlist.count-1);
   if offsetlist.count>0 then
   begin
-    btnAddOffset.top:=TOffsetEntry(offsetlist[offsetlist.count-1]).top;
-    btnRemoveOffset.top:=btnAddOffset.top;
+    before:=TOffsetEntry(offsetlist[offsetlist.count-1]);
+    btnAddOffset.AnchorSideTop.Control:=before;
 
     if offsetlist.count=1 then lblInfoLastOffset.visible:=false;
   end
@@ -1484,96 +1531,10 @@ begin
 end;
 
 procedure TfrmPointerScannerSettings.updatepositions;
-var
-  i: integer;
-  nexttop: integer;
- // adjustment: integer;
-  newheight: integer;
 begin
-  cbShowAdvancedOptions.top:=cbCompareToOtherPointermaps.top;
-
-  if cbCompareToOtherPointermaps.checked then
-    panel3.top:=pdatafilelist.Top+pdatafilelist.height
-  else
-    panel3.top:=cbCompareToOtherPointermaps.top+cbCompareToOtherPointermaps.height+2;
 
 
-  if cbShowAdvancedOptions.checked then
-  begin
-    cbAllowRuntimeWorkers.top:=panel3.Top+panel3.height+2;
-    cbMustStartWithBase.top:=cbAllowRuntimeWorkers.top;
-  end
-  else
-  begin
-    cbAllowRuntimeWorkers.top:=cbShowAdvancedOptions.top+cbShowAdvancedOptions.height+2;
-
-//cbMustStartWithBase must be under cbCompareToOtherPointermaps and it's list
-    cbMustStartWithBase.top:=panel3.top;
-  end;
-
-
-
-
-
-
-  if edtBaseFrom<>nil then
-  begin
-    edtBaseFrom.Top:=cbMustStartWithBase.top+cbMustStartWithBase.height+3;
-    edtBaseTo.top:=edtBaseFrom.top+edtbasefrom.height+1;
-    lblbasefrom.top:=edtbasefrom.top+(edtbasefrom.height div 2) - (lblbasefrom.height div 2);
-    lblBaseTo.top:=edtbaseto.top+(edtbaseto.height div 2) - (lblBaseTo.height div 2);
-
-    cbMustEndWithSpecificOffset.Top:=edtBaseTo.top+edtBaseTo.Height+2
-  end
-  else
-    cbMustEndWithSpecificOffset.Top:=cbMustStartWithBase.top+cbMustStartWithBase.height+2;
-
-  nexttop:=cbMustEndWithSpecificOffset.top+cbMustEndWithSpecificOffset.height;
-
-
-  if offsetlist<>nil then
-  begin
-    //update the TOffsetEntry's
-    if offsetlist.Count>0 then
-    begin
-      taborder:=cbMustEndWithSpecificOffset.TabOrder;
-      for i:=0 to offsetlist.Count-1 do
-      begin
-        if (offsetlist[i] is TOffsetEntry) then //should be true
-        begin
-          TOffsetEntry(offsetlist[i]).Top:=nexttop;
-          TOffsetEntry(offsetlist[i]).TabOrder:=taborder;
-
-          inc(nexttop, TOffsetEntry(offsetlist[i]).height);
-        end;
-      end;
-
-      if offsetlist.count>1 then lblInfoLastOffset.top:=TOffsetEntry(offsetlist[0]).Top+4;
-
-      btnAddOffset.top:=TOffsetEntry(offsetlist[offsetlist.Count-1]).Top;
-      btnRemoveOffset.top:=btnAddOffset.top;
-    end;
-
-    newheight:=btnAddOffset.top+btnAddOffset.Height+2+panel1.height;
-  end
-  else
-    newheight:=cbMustEndWithSpecificOffset.top+cbMustEndWithSpecificOffset.Height+2+panel1.height;
-
-
-  newheight:=max(newheight, cbConnectToNode.top+cbConnectToNode.height+2+panel1.height);
-
-
-
-
-
-  if (cbConnectToNode.checked) then
-  begin
-    i:=(iplist.top+iplist.height)+panel1.height;
-    if i>newheight then //more room needed
-      newheight:=i;
-  end;
-
-  clientheight:=newheight;
+  DoAutoSize;
 end;
 
 initialization

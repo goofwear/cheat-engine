@@ -6,17 +6,15 @@ object frmDisassemblyscan: TfrmDisassemblyscan
   Caption = 'Assemblyscan'
   ClientHeight = 170
   ClientWidth = 447
-  Font.Height = -11
-  Font.Name = 'MS Sans Serif'
   OnClose = FormClose
   OnDestroy = FormDestroy
   OnShow = FormShow
   Position = poScreenCenter
-  LCLVersion = '1.0.8.0'
+  LCLVersion = '1.6.0.4'
   object Label1: TLabel
     Left = 0
-    Height = 14
-    Top = 156
+    Height = 15
+    Top = 155
     Width = 447
     Align = alBottom
     Alignment = taCenter
@@ -25,33 +23,43 @@ object frmDisassemblyscan: TfrmDisassemblyscan
   end
   object ListBox1: TListBox
     Left = 0
-    Height = 156
+    Height = 155
     Top = 0
-    Width = 381
+    Width = 379
     Align = alClient
     ItemHeight = 0
+    MultiSelect = True
     OnDblClick = ListBox1DblClick
     OnKeyDown = ListBox1KeyDown
     PopupMenu = PopupMenu1
     TabOrder = 0
   end
   object Panel1: TPanel
-    Left = 381
-    Height = 156
+    Left = 379
+    Height = 155
     Top = 0
-    Width = 66
+    Width = 68
     Align = alRight
-    ClientHeight = 156
-    ClientWidth = 66
+    AutoSize = True
+    ClientHeight = 155
+    ClientWidth = 68
     TabOrder = 1
     OnClick = Panel1Click
     OnResize = Panel1Resize
     object btnCancel: TButton
+      AnchorSideBottom.Control = Panel1
+      AnchorSideBottom.Side = asrBottom
       Left = 3
       Height = 25
-      Top = 128
-      Width = 59
+      Top = 127
+      Width = 62
+      Anchors = [akLeft, akBottom]
+      AutoSize = True
+      BorderSpacing.Left = 2
+      BorderSpacing.Right = 2
+      BorderSpacing.Bottom = 2
       Caption = 'Cancel'
+      Constraints.MinWidth = 60
       OnClick = btnCancelClick
       TabOrder = 0
     end
@@ -69,6 +77,10 @@ object frmDisassemblyscan: TfrmDisassemblyscan
       Default = True
       ShortCut = 32
       OnClick = MenuItem1Click
+    end
+    object MenuItem2: TMenuItem
+      Caption = 'Copy selection to clipboard'
+      OnClick = MenuItem2Click
     end
   end
 end

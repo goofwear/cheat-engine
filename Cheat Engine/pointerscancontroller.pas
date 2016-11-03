@@ -391,6 +391,8 @@ type
     procedure removeWorkerThread;
     procedure addWorkerThread(preferedprocessor: integer=-1);
 
+    procedure disconnectChild(childid: integer; force: boolean);
+
     function hasNetworkResponsibility: boolean;
 
     function isIdle: boolean;
@@ -493,6 +495,9 @@ resourcestring
   rsPSCThePointerlisthandlerWasDestroyedWithoutAGoodReason = 'The pointerlisthandler was destroyed without a good reason';
   rsPSCInvalidCommandWhileWaitingForHello = 'Invalid command while waiting for hello';
   rsPSCAlreadystillConnectedToThisChild = 'Already/still connected to this child';
+  rsInvalidData = 'invalid data:';
+  rsNoUpdateFromTheClientForOver120Sec = 'No update from the client for over 120 seconds';
+  rsAllPathsReceived = 'All paths received';
 
 //------------------------POINTERLISTLOADER-------------
 procedure TPointerlistloader.execute;
@@ -1381,6 +1386,7 @@ begin
     for i:=0 to length(childnodes)-1 do
     begin
       l[i].ip:=childnodes[i].ip;
+      l[i].childid:=childnodes[i].childid;
       l[i].port:=childnodes[i].port;
       l[i].isidle:=childnodes[i].idle;
       l[i].potentialthreadcount:=childnodes[i].potentialthreadcount;
@@ -1565,13 +1571,16 @@ var
   i: integer;
   oi: integer;
   pathsToCopy: integer;
-  listsize: integer;
+  listsize, valuelistsize: integer;
 begin
+  if (pathqueuelength=MAXQUEUESIZE) or (length(overflowqueue)=0) then exit;
+
   overflowqueuecs.enter;
   try
     if (length(overflowqueue)>0) and (pathqueuelength<MAXQUEUESIZE-1) then //I could use some paths
     begin
       listsize:=sizeof(dword)*(maxlevel+1);
+      valuelistsize:=sizeof(qword)*(maxlevel+1);
 
       //do I have an overflow I can use ?
       pathqueueCS.enter;
@@ -1587,11 +1596,9 @@ begin
             pathqueue[i].startlevel:=overflowqueue[oi].startlevel;
             pathqueue[i].valuetofind:=overflowqueue[oi].valuetofind;
 
-
-
             copymemory(@pathqueue[i].tempresults[0], @overflowqueue[oi].tempresults[0], listsize);
             if noLoop then
-              copymemory(@pathqueue[i].valuelist[0], @overflowqueue[oi].valuelist[0], listsize);
+              copymemory(@pathqueue[i].valuelist[0], @overflowqueue[oi].valuelist[0], valuelistsize);
           end;
 
           inc(pathqueuelength, pathsToCopy);
@@ -1616,6 +1623,8 @@ begin
     vtDword: result:=pdword(p)^=valuescandword;
     vtSingle: result:=(psingle(p)^>=valuescansingle) and (psingle(p)^<=valuescansinglemax);
     vtDouble: result:=(pdouble(p)^>=valuescandouble) and (pdouble(p)^<=valuescandoublemax);
+    else
+       result:=false;
   end;
 end;
 
@@ -1645,83 +1654,118 @@ procedure TPointerscanController.SetupQueueForResume;
 var f: TFileStream;
     offsetcountperlist: integer;
 
-    i, j: integer;
+    i, j,k: integer;
 
     addedToQueue: integer;
 
     tempentry: TPathQueueElement;
+
+    tempfix: integer;
+    listsize, valuelistsize: integer;
+
+    ml: integer;
 begin
   //setup the queue
   //load the overflow from the overflow queue
 
   f:=tfilestream.Create(filename+'.resume.queue', fmOpenRead or fmShareDenyNone);
-  offsetcountperlist:=f.readDWord;
+  ml:=f.ReadDWord;
 
-  if offsetcountperlist<>length(pathqueue[0].tempresults) then raise exception.create(rsPSCInvalidQueueFile);
+  if ml<>maxlevel then raise exception.create(rsPSCInvalidQueueFile);
+
+  listsize:=sizeof(dword)*(maxlevel+1);
+  valuelistsize:=sizeof(qword)*(maxlevel+1);
+
 
   pathqueueCS.enter;
+  try
 
-  while f.Position<f.Size do
-  begin
-    i:=length(overflowqueue);
-    setlength(overflowqueue, length(overflowqueue)+1);
-    f.Read(overflowqueue[i].valuetofind, sizeof(pathqueue[i].valuetofind));
-    f.read(overflowqueue[i].startlevel, sizeof(overflowqueue[i].startlevel));
 
-    setlength(overflowqueue[i].tempresults, offsetcountperlist);
-    f.read(overflowqueue[i].tempresults[0], length(overflowqueue[i].tempresults)*sizeof(overflowqueue[i].tempresults[0]));
-
-    if noloop then
+    while f.Position<f.Size do
     begin
-      setlength(overflowqueue[i].valuelist, offsetcountperlist);
-      f.read(overflowqueue[i].valuelist[0], length(overflowqueue[i].valuelist)*sizeof(overflowqueue[i].valuelist[0]));
+      i:=length(overflowqueue);
+      setlength(overflowqueue, length(overflowqueue)+1);
+      if f.Read(overflowqueue[i].valuetofind, sizeof(overflowqueue[i].valuetofind))>0 then
+      begin
+        f.read(overflowqueue[i].startlevel, sizeof(overflowqueue[i].startlevel));
+
+        if overflowqueue[i].startlevel>offsetcountperlist then
+        begin
+          j:=f.Position;
+          raise exception.create(rsInvalidData+inttostr(f.position));
+        end;
+
+        setlength(overflowqueue[i].tempresults, maxlevel+1);
+        f.read(overflowqueue[i].tempresults[0], listsize);
+
+        //length(pathqueue[i].tempresults)*sizeof(pathqueue[i].tempresults[0]));
+
+        if noloop then
+        begin
+          setlength(overflowqueue[i].valuelist, maxlevel+1);
+          f.read(overflowqueue[i].valuelist[0], valuelistsize);
+        end;
+      end;
+
     end;
 
-  end;
-
-  //sort based on level
-  for i:=0 to length(overflowqueue)-2 do
-  begin
-    for j:=i to length(overflowqueue)-1 do
+    //sort based on level
+    for i:=0 to length(overflowqueue)-2 do
     begin
-      if overflowqueue[i].startlevel>overflowqueue[j].startlevel then //swap
+      for j:=i to length(overflowqueue)-1 do
       begin
-        tempentry:=overflowqueue[j];
-        overflowqueue[j]:=overflowqueue[i];
-        overflowqueue[i]:=tempentry;
+        if overflowqueue[i].startlevel>overflowqueue[j].startlevel then //swap
+        begin
+          tempentry:=overflowqueue[j];
+          overflowqueue[j]:=overflowqueue[i];
+          overflowqueue[i]:=tempentry;
+        end;
       end;
     end;
+
+    addedToQueue:=0;
+    try
+
+      for i:=length(overflowqueue)-1 downto 0 do
+      begin
+        if pathqueuelength<MAXQUEUESIZE then
+        begin
+          pathqueue[pathqueuelength]:=overflowqueue[i];
+          inc(pathqueuelength);
+
+          overflowqueue[i].tempresults[0]:=$cece;
+          inc(addedToQueue);
+
+        end else break;
+      end;
+
+    finally
+      setlength(overflowqueue, length(overflowqueue)-addedToQueue);
+      ReleaseSemaphore(pathqueueSemaphore, addedToQueue, nil);
+    end;
+
+  finally
+    pathqueueCS.leave;
+    f.free;
   end;
 
-  addedToQueue:=0;
-
-  for i:=length(overflowqueue)-1 downto 0 do
-  begin
-    if pathqueuelength<MAXQUEUESIZE then
-    begin
-      pathqueue[(length(overflowqueue)-1)-i]:=overflowqueue[i];
 
 
-      overflowqueue[i].tempresults[0]:=$cece;
-      inc(addedToQueue);
-      inc(pathqueuelength);
-    end else break;
-  end;
-
-  setlength(overflowqueue, length(overflowqueue)-addedToQueue);
-
-  ReleaseSemaphore(pathqueueSemaphore, addedToQueue, nil);
-  pathqueueCS.leave;
-
-  f.free;
 end;
 
 procedure TPointerscanController.SaveAndClearQueue(s: TStream);
 var
   i: integer;
   pathslocked: boolean;
+
+  v: qword;
+  l: integer;
+  listsize, valuelistsize: integer;
 begin
   if s=nil then exit; //can happen if stop is pressed right after the scan is done but before the gui is updated
+
+  listsize:=sizeof(dword)*(maxlevel+1);
+  valuelistsize:=sizeof(qword)*(maxlevel+1);
 
   if pathqueuelength>0 then
   begin
@@ -1730,23 +1774,27 @@ begin
       //save the current queue and clear it (repeat till all scanners are done)
       for i:=0 to pathqueuelength-1 do
       begin
-        s.Write(pathqueue[i].valuetofind, sizeof(pathqueue[i].valuetofind));
-        s.Write(pathqueue[i].startlevel, sizeof(pathqueue[i].startlevel));
-        s.Write(pathqueue[i].tempresults[0], length(pathqueue[i].tempresults)*sizeof(pathqueue[i].tempresults[0]));
+        v:=pathqueue[i].valuetofind;
+        l:=pathqueue[i].startlevel;
+        s.Write(v, sizeof(v));
+        s.Write(l, sizeof(l));
+        s.Write(pathqueue[i].tempresults[0], listsize);
 
         if noloop then
-          s.Write(pathqueue[i].valuelist[0], length(pathqueue[i].valuelist)*sizeof(pathqueue[i].valuelist[0]));
+          s.Write(pathqueue[i].valuelist[0], valuelistsize);
       end;
 
       //also save the overflow queue
       for i:=0 to length(overflowqueue)-1 do
       begin
-        s.Write(overflowqueue[i].valuetofind, sizeof(overflowqueue[i].valuetofind));
-        s.Write(overflowqueue[i].startlevel, sizeof(overflowqueue[i].startlevel));
-        s.Write(overflowqueue[i].tempresults[0], length(overflowqueue[i].tempresults)*sizeof(overflowqueue[i].tempresults[0]));
+        v:=overflowqueue[i].valuetofind;
+        l:=overflowqueue[i].startlevel;
+        s.Write(v, sizeof(v));
+        s.Write(l, sizeof(l));
+        s.Write(overflowqueue[i].tempresults[0], listsize);
 
         if noloop then
-          s.Write(overflowqueue[i].valuelist[0], length(overflowqueue[i].valuelist)*sizeof(overflowqueue[i].valuelist[0]));
+          s.Write(overflowqueue[i].valuelist[0], valuelistsize);
       end;
 
       setlength(overflowqueue,0);
@@ -1778,6 +1826,8 @@ var
 
   savedqueue: TFilestream;
   scandatawriter: TScanDataWriter;
+
+  terminatedTime: qword;
 
 
   cs: Tcompressionstream;
@@ -1811,7 +1861,27 @@ var
     waitForAndHandleNetworkEvent;
   end;
 
+  procedure CreateWriterAndQueue;
+  begin
+    if scandatawriter=nil then
+    begin
+      scandatawriter:=TScanDataWriter.Create(true);
+      scandatawriter.progressbar:=progressbar;
+      scandatawriter.filename:=filename+'.resume.scandata';
+      scandatawriter.pointerlisthandler:=pointerlisthandler;
+      scandatawriter.Start;
+    end;
+
+    if savedqueue=nil then
+    begin
+      savedqueue:=TFileStream.Create(filename+'.resume.queue', fmCreate);
+      savedqueue.WriteDWord(maxlevel); //just to be safe
+    end;
+  end;
+
 begin
+  terminatedTime:=0;
+
 
   //scan the buffer
   savedqueue:=nil;
@@ -1865,7 +1935,7 @@ begin
                   if unalligned then
                     currentaddress:=ValueFinder.FindValue(currentaddress+1)
                   else
-                    currentaddress:=ValueFinder.FindValue(currentaddress+pointersize);
+                    currentaddress:=ValueFinder.FindValue(currentaddress+4);
 
                   addedToQueue:=true;
                 end;
@@ -1929,6 +1999,10 @@ begin
         outofdiskspace:=getDiskFreeFromPath(filename)<64*1024*1024*length(localscanners); //64MB for each thread
 
 
+        if haserror then
+          break;
+
+
         if Terminated then
         begin
        {   OutputDebugString('Forced terminate. Telling the scanworkers to die as well');
@@ -1945,21 +2019,20 @@ begin
           end;
 
           if terminated and savestate then
-          begin
-            if scandatawriter=nil then
-            begin
-              scandatawriter:=TScanDataWriter.Create(true);
-              scandatawriter.progressbar:=progressbar;
-              scandatawriter.filename:=filename+'.resume.scandata';
-              scandatawriter.pointerlisthandler:=pointerlisthandler;
-              scandatawriter.Start;
-            end;
+            createWriterAndQueue;
 
-            if savedqueue=nil then
-            begin
-              savedqueue:=TFileStream.Create(filename+'.resume.queue', fmCreate);
-              savedqueue.WriteDWord(length(pathqueue[0].tempresults)); //number of entries in the tempresult array
-            end;
+
+
+          if terminatedTime=0 then
+            terminatedTime:=GetTickCount64;
+
+          if GetTickCount64>terminatedTime+10000 then
+          begin
+            if messagebox(0,'The pointerscanner seems to take a long time to terminate. Force it?', 'Pointerscan Timeout', MB_YESNO)=IDYES then break;
+
+
+            terminatedTime:=GetTickCount;
+
           end;
 
         end;
@@ -1996,7 +2069,10 @@ begin
 
 
           if terminated and savestate then
+          begin
+            createWriterAndQueue;
             saveAndClearQueue(savedqueue);
+          end;
 
           pathqueueCS.Leave;
         end;
@@ -2005,7 +2081,6 @@ begin
 
 
     end;
-
 
 
     //all threads are done
@@ -2213,7 +2288,7 @@ begin
 
 
 
-  if s=SOCKET_ERROR then
+  if s=tsocket(SOCKET_ERROR) then
   begin
     OutputDebugString('s==INVALID_SOCKET');
     OutputDebugString('lasterror='+inttostr(socketerror));
@@ -2224,7 +2299,7 @@ begin
 
 {$ifdef windows}
   nonblockingmode:=1;
-  ioctlsocket(s, FIONBIO, nonblockingmode);
+  ioctlsocket(s, longint(FIONBIO), nonblockingmode);
 {$else}
   fcntl(fSocket, F_SETFL, fcntl(socketfd, F_GETFL, 0) | O_NONBLOCK);
 {$endif}
@@ -2278,6 +2353,32 @@ begin
     end;
   end;
 
+end;
+
+
+procedure TPointerscanController.disconnectChild(childid: integer; force: boolean);
+var i: integer;
+begin
+  childnodescs.Enter;
+  try
+    for i:=0 to length(childnodes)-1 do
+      if childnodes[i].childid=childid then
+      begin
+        childnodes[i].iConnectedTo:=false; //no reconnect
+        if force then
+          handleChildException(childid, 'forced disconnect')
+        else
+        begin
+          childnodes[i].takePathsAndDisconnect:=true;
+          childnodes[i].terminating:=true;
+        end;
+
+      end;
+
+
+  finally
+    childnodescs.leave;
+  end;
 end;
 
 
@@ -2408,6 +2509,9 @@ begin
                 handleChildException(i, e.message); //marks the child as disconnected
             end;
           end;
+
+          if (childnodes[i].socket<>nil) and (childnodes[i].scandatauploader=nil) and (GetTickCount64-childnodes[i].LastUpdateReceived>120000) then
+            handleChildException(i, rsNoUpdateFromTheClientForOver120Sec); //marks the child as disconnected
 
           inc(i);
         end;
@@ -2752,7 +2856,7 @@ begin
   if (currentscanhasended and savestate) or child.trusted or child.terminating then
   begin
 
-    if count<0 then raise exception.create(rsPSCTheChildTriedToSendANegativeAmount);
+    if integer(count)<0 then raise exception.create(rsPSCTheChildTriedToSendANegativeAmount);
     if count>65536 then raise exception.create(rsPSCTheChildTriedToSendMorePathsAtOnceThanAllowed);  //actually 1000 but let's allow some customization
 
 
@@ -3176,6 +3280,12 @@ begin
     if (child^.terminating) then
     begin
       HandleUpdateStatusMessage_RequestPathsFromChild(child,min(1000, updatemsg.localpathqueuecount));
+
+      if child^.takePathsAndDisconnect and (updatemsg.localpathqueuecount=0) then
+      begin
+        handleChildException(index, rsAllPathsReceived);
+      end;
+
       exit;
     end;
 
@@ -3327,16 +3437,24 @@ begin
 end;
 
 procedure TPointerscanController.InitializeEmptyPathQueue;
-var i: integer;
+var i,j: integer;
 begin
   pathqueueCS.enter;
   try
     pathqueuelength:=0;
     for i:=0 to MAXQUEUESIZE-1 do
     begin
-      setlength(pathqueue[i].tempresults, maxlevel+1);
+      setlength(pathqueue[i].tempresults, maxlevel+2);
+      for j:=0 to maxlevel+1 do
+        pathqueue[i].tempresults[j]:=$cececece;
+
+
       if noLoop then
-        setlength(pathqueue[i].valuelist, maxlevel+1);
+      begin
+        setlength(pathqueue[i].valuelist, maxlevel+2);
+        for j:=0 to maxlevel+1 do
+          pathqueue[i].valuelist[j]:=$cececececececece;
+      end;
     end;
 
   finally
@@ -3507,6 +3625,7 @@ begin
 
   InitializeEmptyPathQueue;
   InitializeCompressedPtrVariables;
+
 
 
 
@@ -4269,7 +4388,10 @@ begin
     result:=nil;
 
     if resumescan then
-      resumeptrfilereader:=TPointerscanresultReader.create(filename)
+    begin
+      resumeptrfilereader:=TPointerscanresultReader.create(filename);
+      resumeptrfilereader.ReleaseFiles;
+    end
     else
     begin
       //not a resume, delete the old files
@@ -4408,7 +4530,6 @@ begin
     InitializeCompressedPtrVariables;
 
 
-
     reverseScanCS:=tcriticalsection.Create;
 
     setlength(PreferedProcessorList,0);
@@ -4492,6 +4613,10 @@ begin
           for i:=0 to length(mustendwithoffsetlist)-1 do
             result.writeDword(mustendwithoffsetlist[i]);
         end;
+
+        result.writebyte(ifthen(mustStartWithBase,1,0));
+        if mustStartWithBase then
+          result.WriteQWord(BaseStart);
 
       end;
 
@@ -4673,7 +4798,7 @@ begin
   //mark the socket as non blocking
 {$ifdef windows}
   bm:=0;
-  ioctlsocket(sockethandle, FIONBIO, bm);
+  ioctlsocket(sockethandle, longint(FIONBIO), bm);
 {$else}
   fcntl(fSocket, F_SETFL, fcntl(socketfd, F_GETFL, 0) | O_NONBLOCK);
 {$endif}
@@ -5127,6 +5252,7 @@ begin
   s.WriteQWord(totalpathsevaluated);
   s.writebyte(ifthen(compressedptr,1,0));
   s.writebyte(ifthen(unalligned,1,0));
+  s.Writebyte(ifthen(staticonly,1,0));
   s.writebyte(ifthen(noLoop,1,0));
   s.writebyte(ifthen(muststartwithbase,1,0));
   s.writebyte(ifthen(LimitToMaxOffsetsPerNode,1,0));
@@ -5173,7 +5299,7 @@ begin
 
   overflowqueuecs:=TCriticalSection.create;
 
-  nextchildid:=random(MaxInt); //just a random start
+  nextchildid:=1+random(MaxInt); //just a random start
 
   inherited create(suspended);
 end;
@@ -5201,10 +5327,10 @@ begin
     sockethandle:=-1;
   end; }
 
-  if listensocket<>-1 then
+  if listensocket<>THandle(-1) then
   begin
     closesocket(listensocket);
-    listensocket:=-1;
+    listensocket:=THandle(-1);
   end;
 
   if instantrescan then

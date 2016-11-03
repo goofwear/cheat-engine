@@ -77,6 +77,7 @@ type
     function singleStep(var dwContinueStatus: dword): boolean;
 
     procedure ModifyRegisters(bp: PBreakpoint);
+    procedure TraceWindowAddRecord;
     procedure handleTrace;
     procedure HandleBreak(bp: PBreakpoint);
     procedure ContinueFromBreakpoint(bp: PBreakpoint; continueoption: TContinueOption);
@@ -99,7 +100,9 @@ type
     armcontext: TArmContext;
 
 
+
     procedure UpdateMemoryBrowserContext;
+
     procedure TracerQuit;
     procedure suspend;
     procedure resume;
@@ -138,6 +141,10 @@ uses foundcodeunit, DebugHelper, MemoryBrowserFormUnit, frmThreadlistunit,
      WindowsDebugger, VEHDebugger, KernelDebuggerInterface, NetworkDebuggerInterface,
      frmDebugEventsUnit, formdebugstringsunit, symbolhandler,
      networkInterface, networkInterfaceApi, ProcessHandlerUnit;
+
+resourcestring
+  rsDebugHandleAccessViolationDebugEventNow = 'Debug HandleAccessViolationDebugEvent now';
+  rsSpecialCase = 'Special case';
 
 procedure TDebugThreadHandler.frmchangedaddresses_AddRecord;
 begin
@@ -351,12 +358,13 @@ end;
 
 function TDebugThreadHandler.EnableOriginalBreakpointAfterThisBreakpointForThisThread(bp: Pbreakpoint; OriginalBreakpoint: PBreakpoint): boolean;
 begin
+  result:=true;
   TDebuggerthread(debuggerthread).execlocation:=40;
   debuggercs.enter;
   if bp.active then
   begin
     dec(OriginalBreakpoint.referencecount);
-    TdebuggerThread(debuggerthread).SetBreakpoint(Originalbreakpoint, self);
+    result:=TdebuggerThread(debuggerthread).SetBreakpoint(Originalbreakpoint, self);
   end;
   debuggercs.leave;
 end;
@@ -577,9 +585,22 @@ end;
 procedure TDebugThreadHandler.TracerQuit;
 begin
   tracewindow:=nil;
+
+  if isTracing then
+  begin
+    fillContext;
+    context^.EFlags:=eflags_setTF(context^.EFlags,0); //unsef TF
+    setContext;
+  end;
+
   TDebuggerthread(debuggerthread).execlocation:=45;
 end;
 
+procedure TDebugThreadHandler.TraceWindowAddRecord;
+begin
+  if traceWindow<>nil then
+    tracewindow.addRecord;
+end;
 
 procedure TDebugThreadHandler.handleTrace;
 var
@@ -589,18 +610,31 @@ var
 
   ignored: boolean;
 begin
+  if tracewindow=nil then
+  begin
+    isTracing:=false;
+    ContinueFromBreakpoint(nil, co_run);
+    exit;
+  end;
+
+  ignored:=false;
+
   TDebuggerthread(debuggerthread).execlocation:=37;
 
-  ignored:=IgnoredModuleListHandler.InIgnoredModuleRange(context.{$ifdef cpu64}rip{$else}eip{$endif});
+  if IgnoredModuleListHandler<>nil then
+    ignored:=IgnoredModuleListHandler.InIgnoredModuleRange(context.{$ifdef cpu64}rip{$else}eip{$endif});
 
   if (not ignored) and traceNoSystem and symhandler.inSystemModule(context.{$ifdef cpu64}rip{$else}eip{$endif}) then
     ignored:=true;
 
+  TDebuggerthread(debuggerthread).execlocation:=371;
   if (tracewindow<>nil) and (not ignored) then
   begin
-    TDebuggerthread(debuggerthread).Synchronize(TDebuggerthread(debuggerthread), tracewindow.AddRecord);
+    TDebuggerthread(debuggerthread).Synchronize(TDebuggerthread(debuggerthread), TraceWindowAddRecord);
     TDebuggerthread(debuggerthread).guiupdate:=true;
   end;
+
+  TDebuggerthread(debuggerthread).execlocation:=372;
 
   dec(tracecount);
   if tracecount>0 then
@@ -609,6 +643,7 @@ begin
     begin
       if CheckIfConditionIsMet(nil, 'return '+traceQuitCondition) then
       begin
+        TDebuggerthread(debuggerthread).execlocation:=373;
         //quit condition is met
         if tracewindow<>nil then
           TDebuggerthread(debuggerthread).Synchronize(TDebuggerthread(debuggerthread), tracewindow.Finish);
@@ -621,16 +656,21 @@ begin
       end;
     end;
 
+    TDebuggerthread(debuggerthread).execlocation:=374;
+
     if ignored then
     begin
+      TDebuggerthread(debuggerthread).execlocation:=375;
       tracewindow.returnfromignore:=true;
       ReadProcessMemory(processhandle, pointer(context.{$ifdef cpu64}rsp{$else}esp{$endif}), @r, sizeof(processhandler.pointersize), x);
       b:=TDebuggerthread(debuggerthread).SetOnExecuteBreakpoint(r , false, ThreadId);
       b.OneTimeOnly:=true;
+      TDebuggerthread(debuggerthread).execlocation:=376;
       ContinueFromBreakpoint(nil, co_run);
     end
     else
     begin
+      TDebuggerthread(debuggerthread).execlocation:=377;
       if tracestepover then
         ContinueFromBreakpoint(nil, co_stepover)
       else
@@ -639,9 +679,15 @@ begin
   end
   else
   begin
+    TDebuggerthread(debuggerthread).execlocation:=378;
     //outputdebugstring('tracecount=0');
     if tracewindow<>nil then
+    begin
+      TDebuggerthread(debuggerthread).execlocation:=379;
       TDebuggerthread(debuggerthread).Synchronize(TDebuggerthread(debuggerthread), tracewindow.Finish);
+    end;
+
+    TDebuggerthread(debuggerthread).execlocation:=380;
 
     ContinueFromBreakpoint(nil, co_run);
     isTracing:=false;
@@ -1065,7 +1111,7 @@ begin
     begin
       //pagefault while waiting for single step
       {$ifdef DEBUG}
-      Messagebox(0,'Debug HandleAccessViolationDebugEvent now','Special case',0);
+      Messagebox(0,rsDebugHandleAccessViolationDebugEventNow,rsSpecialCase,0);
       {$endif}
       for i:=0 to temporaryDisabledExceptionBreakpoints.Count-1 do
       begin
@@ -1645,7 +1691,7 @@ begin
     //if currentthread.needstocleanup then
     currentthread.fillContext;
 
-    if (not TDebuggerthread(debuggerthread).usesGlobalDebug) and (processhandler.SystemArchitecture=archX86) and ((dwContinueStatus=DBG_CONTINUE) or (currentThread.context.Dr6=0) or (currentThread.context.dr6=$ffff0ff0)) then
+    if (not TDebuggerthread(debuggerthread).usesGlobalDebug) and (processhandler.SystemArchitecture=archX86) and ((dwContinueStatus=DBG_CONTINUE) or (currentThread.context.Dr6=0) or (word(currentThread.context.dr6)=$0ff0)) then
     begin
       //continued or not an unhandled debug register exception
       currentthread.context.dr6:=0;

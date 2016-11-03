@@ -8,7 +8,7 @@ interface
 
 uses jwawindows, windows, classes,LCLIntf,imagehlp,{psapi,}sysutils, cefuncproc,
   newkernelhandler,syncobjs, SymbolListHandler, fgl, typinfo, cvconst, PEInfoFunctions,
-  DotNetPipe, DotNetTypes, commonTypeDefs, math;
+  DotNetPipe, DotNetTypes, commonTypeDefs, math, LazUTF8;
 {$endif}
 
 {$ifdef unix}
@@ -241,6 +241,7 @@ type
     procedure EnumerateUserdefinedSymbols(list:tstrings);
 
     function ParseAsPointer(s: string; list:tstrings): boolean;
+    function ParseRange(s: string; var start: QWORD; var stop: QWORD): boolean;
     function GetAddressFromPointer(s: string; var error: boolean):ptrUint;
 
     function LookupStructureOffset(s: string; out offset: integer): boolean;
@@ -302,7 +303,7 @@ implementation
 {$ifdef windows}
 uses assemblerunit, driverlist, LuaHandler, lualib, lua, lauxlib,
   disassemblerComments, StructuresFrm2, networkInterface, networkInterfaceApi,
-  processhandlerunit, Globals, Parsers, MemoryQuery;
+  processhandlerunit, Globals, Parsers, MemoryQuery, LuaCaller;
 {$endif}
 
 {$ifdef unix}
@@ -371,7 +372,10 @@ begin
   id:=id and $1FFFFFFF;
 
   if id<length(SymbolLookupCallbacks[cbp]) then
+  begin
+    CleanupLuaCall(TMethod(SymbolLookupCallbacks[cbp][id]));
     SymbolLookupCallbacks[cbp][id]:=nil;
+  end;
 end;
 
 function registerAddressLookupCallback(callback: TAddressLookupCallback): integer;
@@ -394,7 +398,10 @@ end;
 procedure unregisterAddressLookupCallback(id: integer);
 begin
   if id<length(AddressLookupCallbacks) then
+  begin
+    CleanupLuaCall(TMethod(AddressLookupCallbacks[id]));
     AddressLookupCallbacks[id]:=nil;
+  end;
 end;
 
 
@@ -441,10 +448,12 @@ begin
         end;
       finally
         freemem(modulename);
+        modulename:=nil;
       end;
     end;
   finally
     freemem(x);
+    x:=nil;
   end;
 
   {$endif}
@@ -474,10 +483,12 @@ begin
         end;
       finally
         freemem(drivername);
+        drivername:=nil;
       end;
     end;
   finally
     freemem(x);
+    x:=nil;
   end;
   {$ENDIF}
 end;
@@ -739,7 +750,7 @@ var
 begin
   {$IFNDEF UNIX}
   if pSymInfo.NameLen=0 then
-    exit;
+    exit(false);
 
   self:=TSymbolloaderthread(UserContext);
 
@@ -784,9 +795,9 @@ begin
 
       ZeroMemory(@c, sizeof(c));
       c.InstructionOffset:=self.extraSymbolData.symboladdress;
-      SymSetContext(self.thisprocesshandle, @c, NULL);
+      SymSetContext(self.thisprocesshandle, @c, nil);
 
-      SymEnumSymbols(self.thisprocesshandle, 0, NULL, @ES2, self);
+      SymEnumSymbols(self.thisprocesshandle, 0, nil, @ES2, self);
 
       self.extraSymbolData.filledin:=true;
     end;
@@ -873,7 +884,7 @@ begin
 
  // result:=SymEnumTypes(self.thisprocesshandle, baseofdll, @ET, self);
 
-  result:=(self.terminated=false) and (SymEnumSymbols(self.thisprocesshandle, baseofdll, NULL, @ES, self));
+  result:=(self.terminated=false) and (SymEnumSymbols(self.thisprocesshandle, baseofdll, nil, @ES, self));
 
   //mark this module as loaded
 
@@ -1109,6 +1120,7 @@ begin
           fprogress:=ceil((i/modulecount)*100);
 
           freemem(modinfo);
+          modinfo:=nil;
         end;
 
 
@@ -2776,7 +2788,8 @@ function TSymhandler.loadmodulelist: boolean;  //todo: change to a quicker looku
 var
   ths: thandle;
   me32:MODULEENTRY32;
-  x: pchar;
+  s: string;
+  x: string;
 
   i: integer;
 
@@ -2839,11 +2852,12 @@ begin
           try
             if module32first(ths,me32) then
             repeat
-              x:=me32.szExePath;
-              if (x[0]<>'[') then //do not extract the filename if it's a 'special' marker
-                modulename:=extractfilename(x)
+              s:=WinCPToUTF8(pchar(@me32.szExePath[0]));
+              x:=s;
+              if (s[1]<>'[') then //do not extract the filename if it's a 'special' marker
+                modulename:=extractfilename(s)
               else
-                modulename:=x;
+                modulename:=s;
 
 
               alreadyInTheList:=false;
@@ -3071,6 +3085,42 @@ begin
   finally
     list.free;
   end;
+end;
+
+function TSymhandler.ParseRange(s: string; var start: QWORD; var stop: QWORD): boolean;
+var
+  tokens: ttokens;
+  i: integer;
+  t2start: integer;
+  s1,s2: string;
+  err: boolean;
+begin
+  result:=false;
+  tokenize(s, tokens);
+
+  //first find the first part
+  s1:='';
+  for i:=0 to length(tokens)-2 do
+  begin
+    s1:=s1+tokens[i];
+    err:=false;
+    start:=symhandler.getAddressFromName(s1, true, err);
+    if (err=false) and (tokens[i+1]='-') then
+    begin
+      t2start:=i+2;
+      break;
+    end;
+  end;
+
+  if err then exit;
+
+  s2:='';
+  for i:=t2start to length(tokens)-1 do
+    s2:=s2+tokens[i];
+
+  stop:=symhandler.getAddressFromName(s2, true, err);
+
+  result:=not err;
 end;
 
 function TSymhandler.ParseAsPointer(s: string; list:tstrings): boolean;

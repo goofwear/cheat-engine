@@ -7,7 +7,7 @@ interface
 uses
   windows, LCLIntf, Messages, SysUtils, Classes, Graphics, Controls, Forms,
   Dialogs,CEFuncProc,imagehlp, StdCtrls, ComCtrls, ExtCtrls, ActnList,
-  Menus, LResources,symbolhandler;
+  Menus, LResources,symbolhandler, FindDialogFix, commonTypeDefs;
 
 type tenumthread=class(tthread)
   public
@@ -22,6 +22,9 @@ type tenumthread=class(tthread)
 end;
 
 type
+
+  { TfrmEnumerateDLLs }
+
   TfrmEnumerateDLLs = class(TForm)
     Label2: TLabel;
     TreeView1: TTreeView;
@@ -34,7 +37,10 @@ type
     pmSymbol: TPopupMenu;
     Find1: TMenuItem;
     procedure Button1Click(Sender: TObject);
+    procedure FindDialog1Close(Sender: TObject);
     procedure FormClose(Sender: TObject; var Action: TCloseAction);
+    procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure TreeView1DblClick(Sender: TObject);
     procedure Button2Click(Sender: TObject);
@@ -43,6 +49,7 @@ type
   private
     { Private declarations }
     enumthread: tenumthread;
+    findpos: tpoint;
 
   public
     { Public declarations }
@@ -176,6 +183,12 @@ begin
   close;
 end;
 
+procedure TfrmEnumerateDLLs.FindDialog1Close(Sender: TObject);
+begin
+  findpos.x:=finddialog1.left;
+  findpos.y:=finddialog1.top;
+end;
+
 procedure TfrmEnumerateDLLs.FormClose(Sender: TObject;
   var Action: TCloseAction);
 begin
@@ -184,8 +197,31 @@ begin
   frmEnumerateDLLS:=nil;
 end;
 
+procedure TfrmEnumerateDLLs.FormCreate(Sender: TObject);
+var x: TWindowPosArray;
+begin
+  LoadFormPosition(self,x);
+  if length(x)>=2 then
+  begin
+    findpos.x:=x[0];
+    findpos.y:=x[1];
+  end;
+end;
+
+procedure TfrmEnumerateDLLs.FormDestroy(Sender: TObject);
+var x: TWindowPosArray;
+begin
+  setlength(x,2);
+  x[0]:=findpos.x;
+  x[1]:=findpos.y;
+  SaveFormPosition(self,x);
+end;
+
 procedure TfrmEnumerateDLLs.FormShow(Sender: TObject);
 begin
+  button2.autosize:=true;
+  button2.height:=canvas.TextHeight(button2.caption)+4;
+  treeview1.font.height:=GetFontData(font.Handle).Height;
 
 end;
 
@@ -226,8 +262,21 @@ begin
 end;
 
 procedure TfrmEnumerateDLLs.FindExecute(Sender: TObject);
+var p: TPoint;
 begin
   finddialog1.Execute;
+
+  if (findpos.x<>0) or (findpos.y<>0) then
+  begin
+    finddialog1.left:=findpos.x;
+    finddialog1.top:=findpos.y;
+  end
+  else
+  begin
+    finddialog1.Left:=left+((width div 2)-(finddialog1.width div 2));
+    finddialog1.Top:=top+((height div 2)-(finddialog1.height div 2));
+  end;
+
 end;
 
 procedure TfrmEnumerateDLLs.FindDialog1Find(Sender: TObject);

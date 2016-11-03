@@ -5,13 +5,12 @@ unit LastDisassembleData;
 interface
 
 uses
-  Classes, SysUtils;
+  Classes, SysUtils, commonTypeDefs;
 
 type
   TDisAssemblerValueType=(dvtNone=0, dvtAddress=1, dvtValue=2);
 
   TDisassemblerClass=(dcX86, dcArm, dcThumb);
-
 
 
   TLastDisassembleData=record
@@ -31,7 +30,8 @@ type
   //  ValueType: TValueType; //if it's not unknown the value type will say what type of value it is (e.g for the FP types)
 
     datasize: integer;
-//    datatype:
+    isfloat: boolean; //True if the data it reads/writes is a float (only when sure)
+
     hasSib: boolean;
     sibIndex: integer;
     sibScaler: integer;
@@ -40,6 +40,7 @@ type
     iscall: boolean; //set if it's a call
     isret: boolean; //set if it's a ret
     isconditionaljump: boolean; //set if it's only effective when an conditon is met
+    willJumpAccordingToContext: boolean; //only valid if a context was provided with the disassembler and isconditionaljump is true
 
     riprelative: integer; //0 or contains the offset where the rip relative part of the code is
 

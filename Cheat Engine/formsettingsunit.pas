@@ -5,12 +5,12 @@ unit formsettingsunit;
 interface
 
 uses
-  windows, LCLProc, LCLIntf, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
+  windows, win32proc, LCLProc, LCLIntf, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
   StdCtrls,registry, Menus,ComCtrls,CEFuncProc,ExtCtrls,{tlhelp32,}CheckLst,
   Buttons, LResources, frameHotkeyConfigUnit, math,
 
   kerneldebugger,plugin,NewKernelHandler,CEDebugger,hotkeyhandler, debugHelper,
-  formhotkeyunit, debuggertypedefinitions;
+  formhotkeyunit, debuggertypedefinitions, FileUtil, IniFiles;
 
 
 type Tpathspecifier=class(TObject)
@@ -23,49 +23,109 @@ type
   { TformSettings }
 
   TformSettings = class(TForm)
-    cbDontusetempdir: TCheckBox;
-    cbGlobalDebug: TCheckBox;
-    cbKDebug: TRadioButton;
-    cbShowallWindows: TCheckBox;
-    cbAskIfTableHasLuascript: TCheckBox;
+    askforreplacewithnops: TCheckBox;
+    btnCancel: TButton;
+    btnExcludeProcesses: TButton;
+    btnOK: TButton;
+    btnSetFont: TButton;
+    btnSelectLanguage: TButton;
+    cbAlwaysAutoAttach: TCheckBox;
     cbAlwaysRunScript: TCheckBox;
+    cbAskIfTableHasLuascript: TCheckBox;
+    cbCanStepKernelcode: TCheckBox;
+    cbCenterOnPopup: TCheckBox;
+    cbDontusetempdir: TCheckBox;
+    cbFastscan: TCheckBox;
+    cbGlobalDebug: TCheckBox;
+    cbHideAllWindows: TCheckBox;
+    cbKDebug: TRadioButton;
+    cbMemImage: TCheckBox;
+    cbMemMapped: TCheckBox;
+    cbMemPrivate: TCheckBox;
+    cbOldPointerAddMethod: TCheckBox;
+    cbOverrideExistingBPs: TCheckBox;
+    cbPauseWhenScanningOnByDefault: TCheckBox;
+    cbProcessIcons: TCheckBox;
+    cbProcessIconsOnly: TCheckBox;
+    cbSaveWindowPos: TCheckBox;
+    cbShowallWindows: TCheckBox;
+    cbShowAsSigned: TCheckBox;
+    cbShowMainMenu: TCheckBox;
+    cbShowProcesslist: TCheckBox;
+    cbShowUndo: TCheckBox;
+    cbsimplecopypaste: TCheckBox;
+    cbSkip_PAGE_NOCACHE: TCheckBox;
+    cbUpdatefoundList: TCheckBox;
     cbUseVEHDebugger: TRadioButton;
     cbUseWindowsDebugger: TRadioButton;
-    CheckBox1: TCheckBox;
-    cbCanStepKernelcode: TCheckBox;
-    cbShowProcesslist: TCheckBox;
-    cbOverrideExistingBPs: TCheckBox;
     cbVEHRealContextOnThreadCreation: TCheckBox;
     cbWaitAfterGuiUpdate: TCheckBox;
-    cgAllTypes: TCheckGroup;
     cbWriteLoggingOn: TCheckBox;
+    cgAllTypes: TCheckGroup;
+    CheckBox1: TCheckBox;
+    cbOverrideDefaultFont: TCheckBox;
+    cbDPIAware: TCheckBox;
+    cbShowLanguageMenuItem: TCheckBox;
+    combothreadpriority: TComboBox;
     defaultbuffer: TPopupMenu;
     Default1: TMenuItem;
-    edtWriteLogSize: TEdit;
+    EditAutoAttach: TEdit;
+    EditBufsize: TEdit;
+    EditFreezeInterval: TEdit;
+    editUpdatefoundInterval: TEdit;
+    EditUpdateInterval: TEdit;
     edtStacksize: TEdit;
     edtTempScanFolder: TEdit;
+    edtWriteLogSize: TEdit;
+    FontDialog1: TFontDialog;
+    GroupBox1: TGroupBox;
     GroupBox2: TGroupBox;
     GroupBox4: TGroupBox;
+    Label1: TLabel;
+    Label10: TLabel;
+    Label11: TLabel;
+    Label12: TLabel;
+    Label13: TLabel;
+    Label14: TLabel;
+    Label15: TLabel;
+    lblCurrentLanguage: TLabel;
+    Label18: TLabel;
+    Label19: TLabel;
     Label2: TLabel;
-    Label8: TLabel;
-    lblThreadFollowing: TLabel;
+    Label21: TLabel;
+    Label23: TLabel;
+    Label24: TLabel;
+    Label3: TLabel;
     Label4: TLabel;
     Label6: TLabel;
     Label7: TLabel;
+    Label8: TLabel;
+    Label9: TLabel;
+    lblThreadFollowing: TLabel;
+    lbLanguages: TListBox;
     LoadButton: TSpeedButton;
+    MenuItem1: TMenuItem;
     Panel1: TPanel;
+    Panel10: TPanel;
+    Panel9: TPanel;
     pcDebugConfig: TPageControl;
     pnlConfig: TPanel;
-    rbVEHHookThreadCreation: TRadioButton;
-    rbVEHUseProcessWatcher: TRadioButton;
-    rbVEHPollThread: TRadioButton;
-    rbPageExceptions: TRadioButton;
+    miLanguages: TPopupMenu;
     rbDebugAsBreakpoint: TRadioButton;
     rbgDebuggerInterface: TRadioGroup;
     rbInt3AsBreakpoint: TRadioButton;
+    rbPageExceptions: TRadioButton;
+    rbVEHHookThreadCreation: TRadioButton;
+    rbVEHPollThread: TRadioButton;
+    rbVEHUseProcessWatcher: TRadioButton;
+    replacewithnops: TCheckBox;
+    ScrollBox1: TScrollBox;
+    ScrollBox2: TScrollBox;
+    ScrollBox3: TScrollBox;
     SelectDirectoryDialog1: TSelectDirectoryDialog;
     spbDown: TSpeedButton;
     spbUp: TSpeedButton;
+    Languages: TTabSheet;
     tsKernelDebugConfig: TTabSheet;
     tsVEHDebugConfig: TTabSheet;
     tsWindowsDebuggerConfig: TTabSheet;
@@ -73,45 +133,10 @@ type
     pcSetting: TPageControl;
     GeneralSettings: TTabSheet;
     ScanSettings: TTabSheet;
-    Label11: TLabel;
-    Label12: TLabel;
-    Label13: TLabel;
-    Label14: TLabel;
-    Label18: TLabel;
-    Label19: TLabel;
-    Label23: TLabel;
-    Label24: TLabel;
-    cbShowUndo: TCheckBox;
-    cbCenterOnPopup: TCheckBox;
-    EditUpdateInterval: TEdit;
-    EditFreezeInterval: TEdit;
-    GroupBox1: TGroupBox;
-    cbShowAsSigned: TCheckBox;
-    cbsimplecopypaste: TCheckBox;
-    cbUpdatefoundList: TCheckBox;
-    editUpdatefoundInterval: TEdit;
-    cbHideAllWindows: TCheckBox;
-    btnExcludeProcesses: TButton;
-    EditAutoAttach: TEdit;
-    cbAlwaysAutoAttach: TCheckBox;
-    cbSaveWindowPos: TCheckBox;
-    Label3: TLabel;
-    Label1: TLabel;
-    Label15: TLabel;
-    Label21: TLabel;
-    combothreadpriority: TComboBox;
-    cbFastscan: TCheckBox;
-    cbSkip_PAGE_NOCACHE: TCheckBox;
-    cbMemImage: TCheckBox;
-    cbMemMapped: TCheckBox;
-    cbMemPrivate: TCheckBox;
-    EditBufsize: TEdit;
     Plugins: TTabSheet;
     CodeFinder: TTabSheet;
     Assembler: TTabSheet;
     cbHandleBreakpoints: TCheckBox;
-    replacewithnops: TCheckBox;
-    askforreplacewithnops: TCheckBox;
     Extra: TTabSheet;
     TauntOldOsUser: TLabel;
     GroupBox3: TGroupBox;
@@ -129,11 +154,7 @@ type
     cbIncremental: TCheckBox;
     Panel6: TPanel;
     AboutLabel: TLabel;
-    btnCancel: TButton;
-    btnOK: TButton;
     frameHotkeyConfig: TframeHotkeyConfig;
-    cbProcessIcons: TCheckBox;
-    cbProcessIconsOnly: TCheckBox;
     tsTools: TTabSheet;
     Panel2: TPanel;
     cbShowTools: TCheckBox;
@@ -152,8 +173,6 @@ type
     edtToolsName: TEdit;
     OpenButton: TSpeedButton;
     OpenDialog2: TOpenDialog;
-    cbShowMainMenu: TCheckBox;
-    cbOldPointerAddMethod: TCheckBox;
     Panel7: TPanel;
     Button5: TButton;
     Button4: TButton;
@@ -162,17 +181,22 @@ type
     clbPlugins: TCheckListBox;
     procedure btnOKClick(Sender: TObject);
     procedure btnCancelClick(Sender: TObject);
+    procedure btnSetFontClick(Sender: TObject);
+    procedure btnSelectLanguageClick(Sender: TObject);
     procedure cbAskIfTableHasLuascriptChange(Sender: TObject);
     procedure cbDontusetempdirChange(Sender: TObject);
     procedure cbDebuggerInterfaceChange(Sender: TObject);
     procedure cbKernelQueryMemoryRegionChange(Sender: TObject);
+    procedure cbOverrideDefaultFontChange(Sender: TObject);
     procedure CheckBox1Change(Sender: TObject);
     procedure EditBufSizeKeyPress(Sender: TObject; var Key: Char);
     procedure Default1Click(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure cbShowDisassemblerClick(Sender: TObject);
+    procedure Label3Click(Sender: TObject);
     procedure LoadButtonClick(Sender: TObject);
+    procedure MenuItem1Click(Sender: TObject);
     procedure Panel3Click(Sender: TObject);
     procedure Panel3Resize(Sender: TObject);
     procedure pcSettingChange(Sender: TObject);
@@ -189,6 +213,7 @@ type
     procedure FormClose(Sender: TObject; var Action: TCloseAction);
     procedure Button4Click(Sender: TObject);
     procedure Button5Click(Sender: TObject);
+    procedure ScrollBox1Click(Sender: TObject);
     procedure spbDownClick(Sender: TObject);
     procedure spbUpClick(Sender: TObject);
     procedure tvMenuSelectionChange(Sender: TObject; Node: TTreeNode);
@@ -221,7 +246,11 @@ type
 
     deletedmodules: tstringlist;
 
+    hasSetNewLanguage: boolean;
+    newLanguage: string;
+
     procedure SetAssociations;
+    procedure LanguageMenuItemClick(Sender: TObject);
   public
     { Public declarations }
     
@@ -240,6 +269,9 @@ type
                             defaultreturn: integer;
                             incremental: boolean;
                           end;
+
+    procedure cleanupLanguageList;
+    procedure ScanForLanguages;
 
   published
     property SettingsTreeView: TTreeView read tvMenuSelection;   //just some stuff to make things look nicer. You're not required to use them
@@ -268,14 +300,18 @@ frmExcludeHideUnit, {
 MemoryBrowserFormUnit,}
 ModuleSafetyUnit,
 frmProcessWatcherUnit,
-ConfigUnrandomizerFrm,
 CustomTypeHandler,
 processlist,
 commonTypeDefs,
 frmEditHistoryUnit,
-Globals;
+Globals,
+fontSaveLoadRegistry,
+CETranslator, MemoryBrowserFormUnit;
 
 
+type TLanguageEntry=class
+  foldername: string;
+end;
 
 
 
@@ -319,6 +355,7 @@ resourcestring
   rsUnrandomizer = 'Unrandomizer';
   rsScanSettings = 'Scan Settings';
   rsPlugins = 'Plugins';
+  rsLanguages = 'Languages';
   rsDebuggerOptions = 'Debugger Options';
   rsExtra = 'Extra';
   rsNoName = 'No Name';
@@ -347,6 +384,8 @@ resourcestring
   rsDecreasedValue = 'Decreased Value';
   rsChangedValue = 'Changed Value';
   rsUnchangedValue = 'Unchanged Value';
+  rsNewLanguageSet = 'New language set';
+  rsRestartCE = 'It is recommended to restart Cheat Engine for this change to take effect';
 procedure TformSettings.btnOKClick(Sender: TObject);
 var processhandle2: Thandle;
     reg: TRegistry;
@@ -518,6 +557,9 @@ begin
       reg.WriteBool('Pointer appending', cbOldPointerAddMethod.checked);
 
       reg.writebool('skip PAGE_NOCACHE',cbSkip_PAGE_NOCACHE.Checked);
+      reg.writebool('Pause when scanning on by default',cbPauseWhenScanningOnByDefault.Checked);
+
+
       reg.WriteBool('Hide all windows',cbHideAllWindows.checked);
       reg.WriteBool('Really hide all windows',temphideall);
 
@@ -545,7 +587,9 @@ begin
 
       if frmModuleSafety<>nil then //modified
       begin
-        freemem(modulelist);
+        if modulelist<>nil then
+          freemem(modulelist);
+
         modulelist:=tempmodulelist;
         modulelistsize:=tempmodulelistsize;
         tempmodulelist:=nil;
@@ -584,10 +628,15 @@ begin
 
 
         reg.WriteFloat('Speedhack 1 speed',frameHotkeyConfig.newspeedhackspeed1.speed);
+        reg.WriteBool('Speedhack 1 disablewhenreleased',frameHotkeyConfig.newspeedhackspeed1.disablewhenreleased);
         reg.WriteFloat('Speedhack 2 speed',frameHotkeyConfig.newspeedhackspeed2.speed);
+        reg.WriteBool('Speedhack 2 disablewhenreleased',frameHotkeyConfig.newspeedhackspeed2.disablewhenreleased);
         reg.WriteFloat('Speedhack 3 speed',frameHotkeyConfig.newspeedhackspeed3.speed);
+        reg.WriteBool('Speedhack 3 disablewhenreleased',frameHotkeyConfig.newspeedhackspeed3.disablewhenreleased);
         reg.WriteFloat('Speedhack 4 speed',frameHotkeyConfig.newspeedhackspeed4.speed);
+        reg.WriteBool('Speedhack 4 disablewhenreleased',frameHotkeyConfig.newspeedhackspeed4.disablewhenreleased);
         reg.WriteFloat('Speedhack 5 speed',frameHotkeyConfig.newspeedhackspeed5.speed);
+        reg.WriteBool('Speedhack 5 disablewhenreleased',frameHotkeyConfig.newspeedhackspeed5.disablewhenreleased);
 
         mainunit2.speedhackspeed1:=frameHotkeyConfig.newspeedhackspeed1;
         mainunit2.speedhackspeed2:=frameHotkeyConfig.newspeedhackspeed2;
@@ -709,8 +758,21 @@ begin
 
       logWrites:=cbWriteLoggingOn.checked;
       setMaxWriteLogSize(writelogsize);
+
+      reg.WriteBool('Show Language MenuItem', cbShowLanguageMenuItem.checked);
+      MainForm.miLanguages.visible:=cbShowLanguageMenuItem.checked and (lbLanguages.Count>1);
+
+
+      reg.WriteBool('DPI Aware', cbDPIAware.Checked);
+      reg.writebool('Override Default Font', cbOverrideDefaultFont.Checked);
     end;
 
+
+    if cbOverrideDefaultFont.checked then
+    begin
+      if reg.OpenKey('\Software\Cheat Engine\Font', true) then
+        SaveFontToRegistry(fontdialog1.Font, reg);
+    end;
 
 
 
@@ -836,6 +898,76 @@ begin
 
 end;
 
+procedure TformSettings.btnSetFontClick(Sender: TObject);
+begin
+  if fontdialog1.Execute then
+  begin
+    cbOverrideDefaultFont.Font.assign(fontdialog1.Font);
+    btnSetFont.Font.assign(fontdialog1.Font);
+  end;
+end;
+
+procedure TformSettings.btnSelectLanguageClick(Sender: TObject);
+var
+  l: TLanguageEntry;
+  preferedLanguage: string;
+  ini: TIniFile;
+  old: string;
+
+  settingsvis: boolean;
+begin
+
+  if lbLanguages.ItemIndex<>-1 then
+  begin
+    l:=TLanguageEntry(lbLanguages.Items.Objects[lbLanguages.ItemIndex]);
+    if l<>nil then
+      preferedLanguage:=l.foldername
+    else
+      preferedLanguage:='*';
+
+    try
+      ini:=TIniFile.Create(cheatenginedir+'languages' + DirectorySeparator+'language.ini');
+      try
+        old:=ini.ReadString('Language','PreferedLanguage','');
+        ini.WriteString('Language','PreferedLanguage',preferedLanguage);
+        hasSetNewLanguage:=true;
+        newLanguage:=preferedLanguage;
+
+        ScanForLanguages;
+
+        doTranslation;
+
+        if uppercase(old)<>uppercase(preferedLanguage) then
+          MessageDlg(rsNewLanguageSet, rsRestartCE, mtInformation, [mbok], 0);
+
+      finally
+        ini.free;
+      end;
+    except
+    end;
+  end;
+
+
+  {settingsvis:=formSettings.Visible;
+
+  MemoryBrowser.Free;
+  MainForm.free;
+
+  Application.CreateForm(TMainForm, MainForm);
+  Application.CreateForm(TMemoryBrowser, MemoryBrowser);
+
+  MainForm.show;
+
+  Application.CreateForm(TformSettings, formSettings);
+
+  LoadSettingsFromRegistry;
+
+  if settingsvis then
+    modalresult:=formsettings.ShowModal;  }
+
+
+end;
+
 procedure TformSettings.cbAskIfTableHasLuascriptChange(Sender: TObject);
 begin
   cbAlwaysRunScript.enabled:=not cbAskIfTableHasLuascript.checked;
@@ -875,6 +1007,11 @@ begin
 
 end;
 
+procedure TformSettings.cbOverrideDefaultFontChange(Sender: TObject);
+begin
+  btnSetFont.enabled:=cbOverrideDefaultFont.Checked;
+end;
+
 procedure TformSettings.CheckBox1Change(Sender: TObject);
 begin
   PreventDebuggerDetection:=checkbox1.checked;
@@ -895,7 +1032,7 @@ end;
 
 procedure TformSettings.FormDestroy(Sender: TObject);
 begin
-  formsettings:=nil;
+  formSettings:=nil;
 end;
 
 procedure TformSettings.FormShow(Sender: TObject);
@@ -927,8 +1064,12 @@ procedure TformSettings.FormShow(Sender: TObject);
     result:=true;
   end;
   var reg: TRegistry;
-  i: integer;
+  i,j: integer;
+  m: dword;
+
+  fd: TFontData;
 begin
+
 
   tempstatepopuphide:=laststatePopupHide;
   temppopupmodifier:=lastpopupmodifier;
@@ -967,8 +1108,45 @@ begin
 
   cbDebuggerInterfaceChange(nil);
 
+  cbVEHRealContextOnThreadCreation.AutoSize:=false;
+  cbVEHRealContextOnThreadCreation.AutoSize:=true;
 
 
+
+  j:=tvMenuSelection.Width;
+  for i:=0 to tvMenuSelection.Items.Count-1 do
+    j:=max(j,tvMenuSelection.Canvas.TextWidth(tvMenuSelection.Items[i].Text)+tvMenuSelection.BorderWidth+tvMenuSelection.Indent*2);
+
+
+  tvMenuSelection.Width:=j;
+
+
+  if WindowsVersion>=wvVista then
+    m:=sendmessage(edtStacksize.Handle, EM_GETMARGINS, 0,0)
+  else
+    m:=0;
+
+
+  i:=max(edtStacksize.ClientWidth, canvas.TextWidth('4096')+(m shr 16)+(m and $ffff));
+  edtStacksize.clientwidth:=i;
+
+  autosize:=false;
+
+  if FontDialog1.Font.Height=0 then
+  begin
+    //first time init
+    fd:=GetFontData(font.handle);
+
+    FontDialog1.Font.Height:=fd.Height;
+    FontDialog1.Font.Pitch:=fd.Pitch;
+    FontDialog1.Font.Style:=fd.Style;
+    FontDialog1.Font.CharSet:=fd.CharSet;
+    FontDialog1.Font.Quality:=fd.Quality;
+    FontDialog1.Font.Name:=fd.Name;
+    FontDialog1.Font.Orientation:=fd.Orientation;
+    FontDialog1.Font.color:=font.color;
+
+  end;
 
  // GroupBox2.top:=rbgDebuggerInterface.top+rbgDebuggerInterface.height+4;
 end;
@@ -978,10 +1156,20 @@ begin
 
 end;
 
+procedure TformSettings.Label3Click(Sender: TObject);
+begin
+
+end;
+
 procedure TformSettings.LoadButtonClick(Sender: TObject);
 begin
   if SelectDirectoryDialog1.Execute then
     edtTempScanFolder.text:=SelectDirectoryDialog1.FileName;
+end;
+
+procedure TformSettings.MenuItem1Click(Sender: TObject);
+begin
+  ScanForLanguages;
 end;
 
 procedure TformSettings.Panel3Click(Sender: TObject);
@@ -1037,7 +1225,6 @@ end;
 
 procedure TformSettings.AboutLabelClick(Sender: TObject);
 begin
-
   with tabout.create(self) do
   begin
     showmodal;
@@ -1063,6 +1250,122 @@ begin
   {$endif}
 end;
 
+procedure TformSettings.cleanupLanguageList;
+var
+  i:integer;
+  e:TLanguageEntry;
+
+begin
+  for i:=0 to lbLanguages.Count-1 do
+  begin
+    e:=TLanguageEntry(lbLanguages.Items.Objects[i]);
+    if e<>nil then
+      e.free;
+    lbLanguages.Items.Objects[i]:=nil;
+  end;
+
+  lbLanguages.Clear;
+
+  for i:=mainform.miLanguages.Count-1 downto 0 do
+    mainform.miLanguages.Items[i].Free;
+end;
+
+procedure TformSettings.ScanForLanguages;
+var
+  i: integer;
+  f: TStringList;
+  n: string;
+  e: TLanguageEntry;
+  ini: TIniFile;
+
+  curr: string;
+  mi: TMenuItem;
+begin
+  n:='';
+  cleanupLanguageList;
+
+  curr:=currentTranslation;
+  if hasSetNewLanguage then
+  begin
+    if newlanguage<>'*' then
+      curr:=newlanguage
+    else
+      curr:='';
+  end;
+
+  if curr='' then
+  begin
+    lbLanguages.Items.Add('>>English');
+    lblCurrentLanguage.Caption:='English';
+  end
+  else
+    lbLanguages.Items.Add('English');
+
+  mi:=TMenuItem.Create(mainform.MainMenu1);
+  mi.Caption:='English';
+  mi.Tag:=0;
+  mi.RadioItem:=true;
+  if curr='' then
+    mi.Checked:=true;
+  mi.OnClick:=LanguageMenuItemClick;
+
+  mainform.miLanguages.Add(mi);
+
+  f:=TStringList.Create;
+  FindAllDirectories(f,CheatEngineDir+'\languages',false);
+  for i:=0 to f.Count-1 do
+  begin
+    n:=f[i];
+    if not (fileexists(n+'\cheatengine.po') or fileexists(n+'\cheatengine-x86_64.po') or fileexists(n+'\cheatengine-i386.po')) then
+      continue;
+
+
+    e:=TLanguageEntry.Create;
+    e.foldername:=ExtractFileName(n);
+
+    if FileExists(f[i]+'\name.txt') then
+      n:=ReadFileToString(f[i]+'\name.txt')
+    else
+      n:=e.foldername;
+
+    mi:=TMenuItem.Create(mainform.MainMenu1);
+    mi.Caption:=n;
+    mi.Tag:=i+1;
+    mi.RadioItem:=true;
+    if uppercase(e.foldername)=uppercase(curr) then
+    begin
+      if (self<>nil) and (lblCurrentLanguage<>nil) then //should always be the case
+        lblCurrentLanguage.Caption:=n;
+
+      n:='>>'+n;
+      mi.Checked:=true;
+    end;
+
+    mi.OnClick:=LanguageMenuItemClick;
+    lbLanguages.Items.AddObject(n,e);
+    mainform.miLanguages.Add(mi);
+
+  end;
+
+
+
+  if tvMenuSelection.Items[6].Visible=false then
+    tvMenuSelection.Items[6].Visible:=lbLanguages.count>1;
+
+  f.free;
+end;
+
+procedure TformSettings.LanguageMenuItemClick(Sender: TObject);
+var mi: TMenuItem;
+begin
+  if sender is TMenuItem then
+  begin
+    mi:=TMenuItem(sender);
+    lbLanguages.ItemIndex:=mi.Tag;
+    btnSelectLanguage.Click;
+  end;
+end;
+
 procedure TformSettings.FormCreate(Sender: TObject);
 var i: integer;
 begin
@@ -1076,15 +1379,15 @@ begin
   tvMenuSelection.Items[3].Data:=Unrandomizer;
   tvMenuSelection.Items[4].Data:=ScanSettings;
   tvMenuSelection.Items[5].Data:=Plugins;
-  tvMenuSelection.Items[6].Data:=self.Assembler;
-  tvMenuSelection.Items[7].Data:=Extra;
+  tvMenuSelection.Items[6].Data:=Languages;
+  tvMenuSelection.Items[7].Data:=self.Assembler;
+  tvMenuSelection.Items[8].Data:=Extra;
 
+  tvMenuSelection.Items[6].Visible:=false;
 
   pcSetting.ShowTabs:=false;
 
-
-
-
+  ScanForLanguages;
 
   combothreadpriority.Items.Clear;
   with combothreadpriority.items do
@@ -1143,8 +1446,9 @@ begin
   tvMenuSelection.Items[3].Text:=rsUnrandomizer;
   tvMenuSelection.Items[4].Text:=rsScanSettings;
   tvMenuSelection.Items[5].Text:=rsPlugins;
-  tvMenuSelection.Items[6].Text:=rsDebuggerOptions;
-  tvMenuSelection.Items[7].Text:=rsExtra;
+  tvMenuSelection.Items[6].Text:=rsLanguages;
+  tvMenuSelection.Items[7].Text:=rsDebuggerOptions;
+  tvMenuSelection.Items[8].Text:=rsExtra;
 
 
 
@@ -1167,8 +1471,9 @@ begin
   //64-bit check
   if is64bitos then
   begin
-    TauntOldOsUser.Visible:=true;
-    TauntOldOsUser.Caption:=rsPleaseBootWithUnsignedDriversAllowedF8DuringBootOr;
+
+    {TauntOldOsUser.Visible:=true;
+    TauntOldOsUser.Caption:=rsPleaseBootWithUnsignedDriversAllowedF8DuringBootOr;   }
 
 
 
@@ -1267,6 +1572,11 @@ begin
 
 end;
 
+procedure TformSettings.ScrollBox1Click(Sender: TObject);
+begin
+
+end;
+
 
 procedure TformSettings.spbUpClick(Sender: TObject);
 var
@@ -1287,15 +1597,39 @@ end;
 
 procedure TformSettings.tvMenuSelectionChange(Sender: TObject;
   Node: TTreeNode);
+var w,h: integer;
 begin
   if node.Data<>nil then
     pcSetting.ActivePage:=TTabSheet(node.data);
+
+  if pcSetting.ActivePage=self.Assembler then
+  begin
+    groupbox2.AutoSize:=true;
+
+    pcDebugConfig.PageIndex:=0;
+    w:=groupbox2.Width;
+    h:=groupbox2.Height;
+
+    pcDebugConfig.PageIndex:=1;
+    w:=max(groupbox2.Width, w);
+    h:=max(groupbox2.Height, h);
+
+    pcDebugConfig.PageIndex:=2;
+    w:=max(groupbox2.Width, w);
+    h:=max(groupbox2.Height, h);
+
+    cbDebuggerInterfaceChange(nil);
+
+    groupbox2.AutoSize:=false;
+
+    groupbox2.Width:=w;
+    groupbox2.Height:=h;
+  end;
 end;
 
 procedure TformSettings.Panel6Resize(Sender: TObject);
 begin
-  btnOK.Left:=btnOK.parent.ClientWidth div 2 - btnOK.Width - 10;
-  btnCancel.Left:=btnCancel.parent.ClientWidth div 2 + 10;
+
 end;
 
 procedure TformSettings.cbProcessIconsClick(Sender: TObject);

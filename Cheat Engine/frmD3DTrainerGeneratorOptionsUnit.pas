@@ -17,34 +17,37 @@ type
     Button2: TButton;
     Button3: TButton;
     Button4: TButton;
-    cbUseD3DKeys: TCheckBox;
+    cbAllowDrag: TCheckBox;
+    cbHasCheckbox: TCheckBox;
     cbShowHotkeys: TCheckBox;
     cbStretch: TCheckBox;
-    cbHasCheckbox: TCheckBox;
-    cbAllowDrag: TCheckBox;
+    cbUseD3DKeys: TCheckBox;
     ColorDialog1: TColorDialog;
-    edtDistanceBetweenLines: TEdit;
-    edtDistanceFromTop: TEdit;
-    edtDistanceFromBorder: TEdit;
     edtd3dkeys: TEdit;
+    edtDistanceBetweenLines: TEdit;
+    edtDistanceFromBorder: TEdit;
+    edtDistanceFromTop: TEdit;
     FontDialog1: TFontDialog;
-    Label4: TLabel;
-    Label5: TLabel;
-    Label6: TLabel;
-    TextOverlayImage: TImage;
     imgChecked: TImage;
-    imgUnchecked: TImage;
     imgPreview: TImage;
+    imgUnchecked: TImage;
     Label1: TLabel;
     Label2: TLabel;
     Label3: TLabel;
+    Label4: TLabel;
+    Label5: TLabel;
+    Label6: TLabel;
     lblTextColor: TLabel;
     OpenPictureDialog1: TOpenPictureDialog;
-    rbTopLeft: TRadioButton;
+    Panel1: TPanel;
+    Panel2: TPanel;
+    pnlPosition: TPanel;
     rbBottomLeft: TRadioButton;
-    rbTopRight: TRadioButton;
     rbBottomRight: TRadioButton;
     rbCenter: TRadioButton;
+    rbTopLeft: TRadioButton;
+    rbTopRight: TRadioButton;
+    TextOverlayImage: TImage;
     TrackBar1: TTrackBar;
     procedure btnClearClick(Sender: TObject);
     procedure Button2Click(Sender: TObject);
@@ -55,6 +58,7 @@ type
     procedure edtd3dkeysKeyDown(Sender: TObject; var Key: Word;
       Shift: TShiftState);
     procedure FormCreate(Sender: TObject);
+    procedure FormShow(Sender: TObject);
   private
     { private declarations }
     procedure updatefontexample;
@@ -81,6 +85,11 @@ begin
   imgPreview.Picture.Bitmap.Canvas.Pixels[0,0]:=imgPreview.Picture.Bitmap.Canvas.Pixels[0,0];
 
   updatefontexample;
+end;
+
+procedure TfrmD3DTrainerGeneratorOptions.FormShow(Sender: TObject);
+begin
+  lblTextColor.Font.Height:=GetFontData(font.handle).height;
 end;
 
 procedure TfrmD3DTrainerGeneratorOptions.Button4Click(Sender: TObject);

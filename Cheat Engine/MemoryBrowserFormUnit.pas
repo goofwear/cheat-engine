@@ -13,7 +13,7 @@ uses
   NewKernelHandler, ComCtrls, LResources, byteinterpreter, StrUtils, hexviewunit,
   debughelper, debuggertypedefinitions,frmMemviewPreferencesUnit, registry,
   scrollboxex, disassemblercomments, multilineinputqueryunit, frmMemoryViewExUnit,
-  LastDisassembleData, ProcessHandlerUnit, commonTypeDefs, binutils;
+  LastDisassembleData, ProcessHandlerUnit, commonTypeDefs, binutils,fontSaveLoadRegistry;
 
 
 type
@@ -21,7 +21,24 @@ type
   { TMemoryBrowser }
 
   TMemoryBrowser = class(TForm)
+    aflabel: TLabel;
+    cflabel: TLabel;
+    CSLabel: TLabel;
+    dflabel: TLabel;
     dispQwords: TMenuItem;
+    DSLabel: TLabel;
+    EAXLabel: TLabel;
+    EBPlabel: TLabel;
+    EBXlabel: TLabel;
+    ECXlabel: TLabel;
+    EDIlabel: TLabel;
+    EDXlabel: TLabel;
+    EIPlabel: TLabel;
+    ESIlabel: TLabel;
+    ESlabel: TLabel;
+    ESPlabel: TLabel;
+    FSlabel: TLabel;
+    GSlabel: TLabel;
     MenuItem1: TMenuItem;
     MenuItem10: TMenuItem;
     MenuItem11: TMenuItem;
@@ -42,6 +59,10 @@ type
     MenuItem23: TMenuItem;
     MenuItem24: TMenuItem;
     MenuItem25: TMenuItem;
+    MenuItem26: TMenuItem;
+    MenuItem27: TMenuItem;
+    miTextEncodingUTF8: TMenuItem;
+    miSetAddress: TMenuItem;
     miGNUAssembler: TMenuItem;
     miBinutilsSelect: TMenuItem;
     miBinUtils: TMenuItem;
@@ -65,7 +86,7 @@ type
     miGotoBookmark7: TMenuItem;
     miGotoBookmark8: TMenuItem;
     miGotoBookmark9: TMenuItem;
-    miTextEncoding8: TMenuItem;
+    miTextEncodingAscii: TMenuItem;
     miTextEncoding16: TMenuItem;
     miReferencedFunctions: TMenuItem;
     miUserDefinedHeader: TMenuItem;
@@ -107,8 +128,15 @@ type
     memorypopup: TPopupMenu;
     Goto1: TMenuItem;
     debuggerpopup: TPopupMenu;
+    oflabel: TLabel;
+    Panel2: TPanel;
+    Panel6: TPanel;
+    Panel7: TPanel;
+    pflabel: TLabel;
     pmRegisters: TPopupMenu;
     sbShowFloats: TButton;
+    sflabel: TLabel;
+    SSlabel: TLabel;
     Timer2: TTimer;
     Panel1: TPanel;
     Panel4: TPanel;
@@ -134,27 +162,6 @@ type
     View1: TMenuItem;
     Stacktrace1: TMenuItem;
     ScrollBox1: TScrollBox;
-    EAXLabel: TLabel;
-    EBXlabel: TLabel;
-    ECXlabel: TLabel;
-    EDXlabel: TLabel;
-    ESIlabel: TLabel;
-    EDIlabel: TLabel;
-    EBPlabel: TLabel;
-    ESPlabel: TLabel;
-    EIPlabel: TLabel;
-    CSLabel: TLabel;
-    DSLabel: TLabel;
-    SSlabel: TLabel;
-    ESlabel: TLabel;
-    FSlabel: TLabel;
-    GSlabel: TLabel;
-    cflabel: TLabel;
-    pflabel: TLabel;
-    aflabel: TLabel;
-    zflabel: TLabel;
-    sflabel: TLabel;
-    oflabel: TLabel;
     Label14: TLabel;
     Shape1: TShape;
     Label15: TLabel;
@@ -223,7 +230,6 @@ type
     IDTlist1: TMenuItem;
     Newwindow1: TMenuItem;
     Follow1: TMenuItem;
-    dflabel: TLabel;
     Copytoclipboard1: TMenuItem;
     copyBytes: TMenuItem;
     copyOpcodes: TMenuItem;
@@ -261,6 +267,7 @@ type
     N18: TMenuItem;
     stacktrace2: TMenuItem;
     Executetillreturn1: TMenuItem;
+    zflabel: TLabel;
     procedure GotoBookmarkClick(Sender: TObject);
     procedure memorypopupPopup(Sender: TObject);
     procedure MenuItem10Click(Sender: TObject);
@@ -272,6 +279,9 @@ type
     procedure MenuItem20Click(Sender: TObject);
     procedure MenuItem22Click(Sender: TObject);
     procedure MenuItem25Click(Sender: TObject);
+    procedure MenuItem26Click(Sender: TObject);
+    procedure MenuItem27Click(Sender: TObject);
+    procedure miSetAddressClick(Sender: TObject);
     procedure miGNUAssemblerClick(Sender: TObject);
     procedure miBinutilsSelectClick(Sender: TObject);
     procedure SetBookmarkClick(Sender: TObject);
@@ -310,6 +320,8 @@ type
     procedure ScrollBox1ConstrainedResize(Sender: TObject; var MinWidth,
       MinHeight, MaxWidth, MaxHeight: TConstraintSize);
     procedure ScrollBox1Paint(Sender: TObject);
+    procedure Shape1ChangeBounds(Sender: TObject);
+    procedure Shape3ChangeBounds(Sender: TObject);
     procedure Splitter1Moved(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure FormCreate(Sender: TObject);
@@ -617,12 +629,14 @@ uses Valuechange,
   frmStringpointerscanUnit,
   frmFilePatcherUnit,
   frmUltimapUnit,
+  frmUltimap2Unit,
   frmAssemblyScanUnit,
   MemoryQuery,
   AccessedMemory,
   Parsers,
   GnuAssembler,
-  frmEditHistoryUnit;
+  frmEditHistoryUnit,
+  frmWatchlistUnit;
 
 
 resourcestring
@@ -817,6 +831,16 @@ begin
 
 end;
 
+procedure TMemoryBrowser.Shape1ChangeBounds(Sender: TObject);
+begin
+
+end;
+
+procedure TMemoryBrowser.Shape3ChangeBounds(Sender: TObject);
+begin
+
+end;
+
 procedure TMemoryBrowser.Panel1Resize(Sender: TObject);
 begin
 
@@ -882,8 +906,8 @@ var
 begin
   s:=tstringlist.create;
   try
-    s.text:=ansitoutf8(dassemblercomments.comments[disassemblerview.SelectedAddress]);
-    if multilineinputquery(rsCommentFor, Format(rsCommentFor, [inttohex(disassemblerview.SelectedAddress, 8)])+' '+rsSShowsTheAutoguessValue, s) then
+    s.text:=dassemblercomments.comments[disassemblerview.SelectedAddress];
+    if multilineinputquery(Format(rsCommentFor, [inttohex(disassemblerview.SelectedAddress, 8)]), Format(rsCommentFor, [inttohex(disassemblerview.SelectedAddress, 8)])+' '+rsSShowsTheAutoguessValue, s) then
       dassemblercomments.comments[disassemblerview.SelectedAddress]:=utf8toansi(s.text);
   finally
     s.free;
@@ -1106,6 +1130,35 @@ begin
 
 end;
 
+procedure TMemoryBrowser.MenuItem26Click(Sender: TObject);
+begin
+  if frmUltimap2=nil then
+    frmUltimap2:=TfrmUltimap2.create(application);
+
+  frmUltimap2.show;
+end;
+
+procedure TMemoryBrowser.MenuItem27Click(Sender: TObject);
+begin
+  if frmWatchlist=nil then
+    frmWatchlist:=tfrmWatchlist.create(Application);
+
+  frmWatchlist.UpdateContext(@lastdebugcontext);
+  frmWatchlist.show;
+end;
+
+procedure TMemoryBrowser.miSetAddressClick(Sender: TObject);
+begin
+  if (debuggerthread<>nil) and (debuggerthread.isWaitingToContinue) then
+  begin
+    debuggerthread.CurrentThread.context.{$ifdef cpu32}eip{$else}Rip{$endif}:=disassemblerview.SelectedAddress;
+    debuggerthread.CurrentThread.setContext;
+    debuggerthread.CurrentThread.UpdateMemoryBrowserContext;
+    UpdateDebugContext(debuggerthread.CurrentThread.Handle, debuggerthread.CurrentThread.ThreadId);
+  end;
+
+end;
+
 procedure TMemoryBrowser.miGNUAssemblerClick(Sender: TObject);
 var gnua: TfrmAutoInject;
 begin
@@ -1181,7 +1234,10 @@ end;
 
 procedure TMemoryBrowser.miTextEncodingClick(Sender: TObject);
 begin
-  if miTextEncoding8.checked then
+  if miTextEncodingAscii.checked then
+    hexview.CharEncoding:=ceAscii
+  else
+  if miTextEncodingUTF8.checked then
     hexview.CharEncoding:=ceUtf8
   else
     hexview.CharEncoding:=ceUtf16;
@@ -1222,6 +1278,7 @@ begin
       end;
     finally
       freemem(buf);
+      buf:=nil;
     end;
   end;
 end;
@@ -1357,7 +1414,7 @@ begin
 
 
       //look for ret, int3 or nop
-      if (d.LastDisassembleData.opcode='??') or (d.LastDisassembleData.opcode='ret') or (d.LastDisassembleData.opcode='int 3') or (d.LastDisassembleData.opcode='nop') then
+      if (d.LastDisassembleData.opcode='??') or (d.LastDisassembleData.opcode='ret') or (d.LastDisassembleData.opcode='int 3') then
       begin
         start:=a; //start from next instruction
         break;
@@ -1607,14 +1664,34 @@ var
   x: TfrmMemviewPreferences;
   i: TDisassemblerViewColorsState;
   reg: tregistry;
+  fd: TFontData;
 begin
   with TfrmMemviewPreferences.create(self) do
   begin
-
-    fontdialog1.Font.name:=disassemblerview.Font.name;
-    fontdialog1.Font.size:=disassemblerview.Font.size;
+    fd:=Graphics.GetFontData(disassemblerview.font.handle);
+    fontdialog1.font.Name:=fd.Name;
+    fontdialog1.font.height:=fd.height;
+    fontdialog1.font.Pitch:=fd.Pitch;
+    fontdialog1.font.Style:=fd.Style;
+    fontdialog1.font.CharSet:=fd.CharSet;
+    fontdialog1.font.Quality:=fd.Quality;
+    fontdialog1.font.Orientation:=fd.Orientation;
 
     btnFont.Caption:=fontdialog1.Font.Name+' '+inttostr(fontdialog1.Font.Size);
+
+
+
+    //FontDialog2.Font.Assign(hexview.HexFont);
+    fd:=Graphics.GetFontData(hexview.HexFont.handle);
+    fontdialog2.font.Name:=fd.Name;
+    fontdialog2.font.height:=fd.height;
+    fontdialog2.font.Pitch:=fd.Pitch;
+    fontdialog2.font.Style:=fd.Style;
+    fontdialog2.font.CharSet:=fd.CharSet;
+    fontdialog2.font.Quality:=fd.Quality;
+    fontdialog2.font.Orientation:=fd.Orientation;
+
+    btnHexFont.Caption:=fontdialog2.Font.Name+' '+inttostr(fontdialog2.Font.Size);
 
     //set the current colors
     colors:=disassemblerview.colors;
@@ -1622,13 +1699,10 @@ begin
     //and now apply those colors
     cbColorGroupChange(cbColorGroup);
 
-    FontDialog2.Font.Assign(hexview.HexFont);
-
     if showmodal=mrok then
     begin
       //set the colors and save to registry
-      disassemblerview.Font.Name:=fontdialog1.Font.name;
-      disassemblerview.Font.size:=fontdialog1.Font.size;
+      disassemblerview.Font:=fontdialog1.Font;
       disassemblerview.colors:=colors;
 
       hexview.HexFont:=fontdialog2.Font;
@@ -1642,17 +1716,13 @@ begin
   reg:=Tregistry.Create;
   try
     if reg.OpenKey('\Software\Cheat Engine\Disassemblerview\',true) then
-    begin
       reg.WriteBinaryData('colors', disassemblerview.colors, sizeof(disassemblerview.colors));
-      reg.WriteString('font.name', disassemblerview.font.name);
-      reg.WriteInteger('font.size', disassemblerview.font.size);
-    end;
 
-    if reg.OpenKey('\Software\Cheat Engine\Hexview\',true) then
-    begin
-      reg.WriteString('font.name', hexview.hexfont.name);
-      reg.WriteInteger('font.size', hexview.hexfont.size);
-    end;
+    if reg.OpenKey('\Software\Cheat Engine\Disassemblerview\Font',true) then
+      SaveFontToRegistry(disassemblerview.font, reg);
+
+    if reg.OpenKey('\Software\Cheat Engine\Hexview\Font',true) then
+      SaveFontToRegistry(hexview.hexfont, reg);
 
   finally
     reg.free;
@@ -1671,6 +1741,9 @@ begin
   GDTlist1.Visible:=not is64bitos;
   IDTlist1.Visible:=not is64bitos;
 
+  scrollbox1.Font.Height:=GetFontData(font.handle).height;
+  if scrollbox1.Font.Height>-13 then
+    scrollbox1.Font.Height:=-13;
 end;
 
 procedure TMemoryBrowser.disassemblerviewDblClick(Sender: TObject);
@@ -1700,7 +1773,9 @@ procedure TMemoryBrowser.FormCreate(Sender: TObject);
 var x: array of integer;
   reg: tregistry;
   f: TFont;
+  i: integer;
 begin
+
   MemoryBrowsers.Add(self);
 
   bookmarks[0].setMi:=miSetBookmark0;
@@ -1735,6 +1810,7 @@ begin
   disassembler:=true;
 
   disassemblerview:=TDisassemblerview.Create(self);
+  disassemblerview.font:=mainform.font;
   disassemblerview.Align:=alClient;
   disassemblerview.Parent:=panel5;
   disassemblerview.PopupMenu:=debuggerpopup;
@@ -1742,6 +1818,9 @@ begin
   disassemblerview.OnDblClick:=disassemblerviewDblClick;
   disassemblerview.TopAddress:=$00400000;
   disassemblerview.name:='DisassemblerView';
+
+  if GetFontData(disassemblerview.font.handle).height>-13 then
+    disassemblerview.font.height:=-13;
 
   hexview:=THexview.create(self);
   hexview.Align:=alClient;
@@ -1752,36 +1831,34 @@ begin
   hexview.Name:='HexadecimalView';
 
   //load from the registry
+  f:=TFont.create;
   reg:=Tregistry.Create;
   try
+
+
+    if reg.OpenKey('\Software\Cheat Engine\Disassemblerview\Font',false) then
+    begin
+      LoadFontFromRegistry(f, reg);
+      disassemblerview.font:=f;
+    end;
+
     if reg.OpenKey('\Software\Cheat Engine\Disassemblerview\',false) then
     begin
       if reg.ValueExists('colors') then
         reg.ReadBinaryData('colors', disassemblerview.colors, sizeof(disassemblerview.colors));
 
-      if reg.ValueExists('font.name') then
-        disassemblerview.font.name:=reg.ReadString('font.name');
-
-      if reg.ValueExists('font.size') then
-        disassemblerview.font.size:=reg.ReadInteger('font.size');
-
       disassemblerview.reinitialize;
     end;
 
-    if reg.OpenKey('\Software\Cheat Engine\Hexview\',false) then
+    if reg.OpenKey('\Software\Cheat Engine\Hexview\Font',false) then
     begin
-      f:=hexview.hexfont;
-
-      if reg.ValueExists('font.name') then
-        f.name:=reg.ReadString('font.name');
-
-      if reg.ValueExists('font.size') then
-        f.size:=reg.ReadInteger('font.size');
-
+      LoadFontFromRegistry(f, reg);
       hexview.hexfont:=f;
     end;
 
+
   finally
+    f.free;
     reg.free;
   end;
 
@@ -1824,13 +1901,22 @@ begin
       registerview.width:=x[5];
     end;
 
-    if length(x)>6 then
+    if length(x)>=7 then
     begin
       Showsymbols1.checked:=x[6]=1;
       Showmoduleaddresses1.checked:=x[7]=1;
 
       symhandler.showsymbols:=showsymbols1.Checked;
       symhandler.showmodules:=Showmoduleaddresses1.Checked;
+    end;
+
+    if length(x)>=9 then
+    begin
+      if x[8]=1 then
+      begin
+        miLockRowsize.Checked:=true;
+        hexview.LockedRowSize:=x[9];
+      end;
     end;
 
 
@@ -1855,8 +1941,12 @@ var newaddress: string;
     old: ptruint;
 begin
   panel4.setfocus;
-  old:=memoryaddress;
-  newaddress:=inputboxtop(rsGotoAddress, rsFillInTheAddressYouWantToGoTo, IntTohex(memoryaddress, 8), true, canceled, memorybrowserHistory);
+//  old:=memoryaddress;
+
+  old:=hexview.SelectionStart;
+  if old=0 then old:=memoryaddress;
+
+  newaddress:=inputboxtop(rsGotoAddress, rsFillInTheAddressYouWantToGoTo, IntTohex(old, 8), true, canceled, memorybrowserHistory);
 
   hexview.address:=getaddress(newaddress);
 
@@ -2624,6 +2714,8 @@ begin
       else
       begin
         //normal reg
+        while length(regname)<3 do
+          regname:=' '+regname;
         tlabel(sender).Caption:=regname+' '+inttohex(value,processhandler.pointersize*2)
       end;
     end;
@@ -3317,7 +3409,9 @@ begin
                               panel1.height,
                               registerview.width,
                               strtoint(BoolToStr(Showsymbols1.checked,'1','0')),
-                              strtoint(BoolToStr(Showmoduleaddresses1.checked,'1','0'))
+                              strtoint(BoolToStr(Showmoduleaddresses1.checked,'1','0')),
+                              strtoint(BoolToStr(miLockRowsize.Checked,'1','0')),
+                              hexview.LockedRowSize
                       ]);
 
 
@@ -3459,6 +3553,7 @@ begin
       end;
     finally
       freemem(header);
+      header:=nil;
     end;
   end;
   modulelist.free;
@@ -3708,6 +3803,7 @@ begin
           lvstacktracedata.Items.Count:=strace.Count;
         finally
           freemem(s);
+          s:=nil;
         end;
       end else
       begin
@@ -4066,10 +4162,8 @@ begin
     if r8label=nil then
     begin
       r8label:=tlabel.create(self);
-      r8label.parent:=scrollbox1;
+      r8label.parent:=panel2;
       r8label.Font:=eaxlabel.Font;
-      r8label.left:=eaxlabel.left;
-      r8label.top:=esplabel.top+(ebxlabel.top-eaxlabel.top);
       r8label.Cursor:=eaxlabel.Cursor;
       r8label.Tag:=6408;
       r8label.PopupMenu:=pmRegisters;
@@ -4080,10 +4174,8 @@ begin
     if r9label=nil then
     begin
       r9label:=tlabel.create(self);
-      r9label.parent:=scrollbox1;
+      r9label.parent:=panel2;
       r9label.Font:=eaxlabel.Font;
-      r9label.left:=eaxlabel.left;
-      r9label.top:=r8label.top+(ebxlabel.top-eaxlabel.top);
       r9label.Cursor:=eaxlabel.Cursor;
       r9label.Tag:=6409;
       r9label.PopupMenu:=pmRegisters;
@@ -4094,10 +4186,8 @@ begin
     if r10label=nil then
     begin
       r10label:=tlabel.create(self);
-      r10label.parent:=scrollbox1;
+      r10label.parent:=panel2;
       r10label.Font:=eaxlabel.Font;
-      r10label.left:=eaxlabel.left;
-      r10label.top:=r9label.top+(ebxlabel.top-eaxlabel.top);
       r10label.Cursor:=eaxlabel.Cursor;
       r10label.Tag:=6410;
       r10label.PopupMenu:=pmRegisters;
@@ -4108,10 +4198,8 @@ begin
     if r11label=nil then
     begin
       r11label:=tlabel.create(self);
-      r11label.parent:=scrollbox1;
+      r11label.parent:=panel2;
       r11label.Font:=eaxlabel.Font;
-      r11label.left:=eaxlabel.left;
-      r11label.top:=r10label.top+(ebxlabel.top-eaxlabel.top);
       r11label.Cursor:=eaxlabel.Cursor;
       r11label.Tag:=6411;
       r11label.PopupMenu:=pmRegisters;
@@ -4122,10 +4210,8 @@ begin
     if r12label=nil then
     begin
       r12label:=tlabel.create(self);
-      r12label.parent:=scrollbox1;
+      r12label.parent:=panel2;
       r12label.Font:=eaxlabel.Font;
-      r12label.left:=eaxlabel.left;
-      r12label.top:=r11label.top+(ebxlabel.top-eaxlabel.top);
       r12label.Cursor:=eaxlabel.Cursor;
       r12label.Tag:=6412;
       r12label.PopupMenu:=pmRegisters;
@@ -4136,10 +4222,8 @@ begin
     if r13label=nil then
     begin
       r13label:=tlabel.create(self);
-      r13label.parent:=scrollbox1;
+      r13label.parent:=panel2;
       r13label.Font:=eaxlabel.Font;
-      r13label.left:=eaxlabel.left;
-      r13label.top:=r12label.top+(ebxlabel.top-eaxlabel.top);
       r13label.Cursor:=eaxlabel.Cursor;
       r13label.Tag:=6413;
       r13label.PopupMenu:=pmRegisters;
@@ -4150,10 +4234,8 @@ begin
     if r14label=nil then
     begin
       r14label:=tlabel.create(self);
-      r14label.parent:=scrollbox1;
+      r14label.parent:=panel2;
       r14label.Font:=eaxlabel.Font;
-      r14label.left:=eaxlabel.left;
-      r14label.top:=r13label.top+(ebxlabel.top-eaxlabel.top);
       r14label.Cursor:=eaxlabel.Cursor;
       r14label.Tag:=6414;
       r14label.PopupMenu:=pmRegisters;
@@ -4164,10 +4246,8 @@ begin
     if r15label=nil then
     begin
       r15label:=tlabel.create(self);
-      r15label.parent:=scrollbox1;
+      r15label.parent:=panel2;
       r15label.Font:=eaxlabel.Font;
-      r15label.left:=eaxlabel.left;
-      r15label.top:=r14label.top+(ebxlabel.top-eaxlabel.top);
       r15label.Cursor:=eaxlabel.Cursor;
       r15label.Tag:=6415;
       r15label.PopupMenu:=pmRegisters;
@@ -4175,34 +4255,12 @@ begin
       r15label.OnMouseDown:=RegisterMouseDown;
     end;
 
-    if processhandler.SystemArchitecture=archX86 then
-      eiplabel.top:=r15label.top+(ebxlabel.top-eaxlabel.top)
-    else
-      eiplabel.top:=r14label.top+(ebxlabel.top-eaxlabel.top);
-
-    label16.top:=eiplabel.top+(ebxlabel.top-eaxlabel.top);
-    Shape3.top:=label16.top+(ebxlabel.top-eaxlabel.top);
-    CSLabel.top:=shape3.top+shape3.height+2;
-    SSLabel.top:=CSLabel.top+(ebxlabel.top-eaxlabel.top);
-    DSLabel.top:=SSLabel.top+(ebxlabel.top-eaxlabel.top);
-    ESLabel.top:=DSLabel.top+(ebxlabel.top-eaxlabel.top);
-    FSLabel.top:=ESLabel.top+(ebxlabel.top-eaxlabel.top);
-    GSLabel.top:=FSLabel.top+(ebxlabel.top-eaxlabel.top);
+    eiplabel.BringToFront;
   end
   else
   begin
     regstart:='E';
     charcount:=8;
-
-    eiplabel.top:=esplabel.top+(ebxlabel.top-eaxlabel.top);
-    label16.top:=eiplabel.top+(ebxlabel.top-eaxlabel.top);
-    Shape3.top:=label16.top+(ebxlabel.top-eaxlabel.top);
-    CSLabel.top:=shape3.top+shape3.height+2;
-    SSLabel.top:=CSLabel.top+(ebxlabel.top-eaxlabel.top);
-    DSLabel.top:=SSLabel.top+(ebxlabel.top-eaxlabel.top);
-    ESLabel.top:=DSLabel.top+(ebxlabel.top-eaxlabel.top);
-    FSLabel.top:=ESLabel.top+(ebxlabel.top-eaxlabel.top);
-    GSLabel.top:=FSLabel.top+(ebxlabel.top-eaxlabel.top);
 
   end;
 
@@ -4221,6 +4279,7 @@ begin
   step1.Enabled:=true;
   stepover1.Enabled:=true;
   runtill1.Enabled:=true;
+  miSetAddress.enabled:=true;
   stacktrace1.Enabled:=true;
   Executetillreturn1.Enabled:=true;
 
@@ -4467,7 +4526,7 @@ begin
       GSlabel.Caption:=temp;
     end else GSlabel.Font.Color:=clWindowText;
 
-    temp:='CF '+IntToStr(GetBit(2,lastdebugcontext.EFLAgs));
+    temp:='CF '+IntToStr(GetBit(0,lastdebugcontext.EFLAgs));
     if temp<>cflabel.Caption then
     begin
       CFlabel.Font.Color:=clred;
@@ -4606,6 +4665,9 @@ begin
 
   if not memorybrowser.Visible then
     memorybrowser.show;
+
+  if (frmWatchlist<>nil) and (frmWatchlist.Visible) then
+    frmWatchlist.UpdateContext(@lastdebugcontext);
 end;
 
 initialization

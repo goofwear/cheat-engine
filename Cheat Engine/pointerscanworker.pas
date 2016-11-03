@@ -311,7 +311,7 @@ end;
 
 function TPointerscanWorker.HasResultsPending: boolean;
 begin
-  fHasResults:=true;
+  result:=fHasResults;
 end;
 
 constructor TPointerscanWorker.create(suspended:boolean);
@@ -338,6 +338,8 @@ var
   wr: dword;
   i: integer;
 begin
+
+  self.NameThreadForDebugging('Worker thread');
   try
     try
       Initialize;

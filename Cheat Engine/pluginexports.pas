@@ -128,6 +128,10 @@ uses MainUnit,MainUnit2, AdvancedOptionsUnit, Assemblerunit,disassembler,frmModi
      formsettingsunit, symbolhandler,frmautoinjectunit, manualModuleLoader,
      MemoryRecordUnit, MemoryBrowserFormUnit, LuaHandler, ProcessHandlerUnit, ProcessList;
 
+resourcestring
+  rsLoadModuleFailed = 'LoadModule failed';
+  rsPluginAddress = 'Plugin Address';
+
 var
   plugindisassembler: TDisassembler;
 
@@ -834,7 +838,7 @@ begin
     on e: exception do
     begin
 
-      messagebox(0, pchar(e.Message), 'LoadModule failed', MB_OK);
+      messagebox(0, pchar(e.Message), pchar(rsLoadModuleFailed), MB_OK);
     end;
   end;
 end;
@@ -853,7 +857,7 @@ end;
 
 function ce_createTableEntry2(parameters: pointer): pointer;
 begin
-  result:=MainForm.addresslist.addaddress('Plugin Address', '0',[],0,vtDword);
+  result:=MainForm.addresslist.addaddress(rsPluginAddress, '0',[],0,vtDword);
 end;
 
 function ce_createTableEntry: pointer; stdcall;
@@ -929,14 +933,18 @@ begin
     begin
 
       if neededoffsets<>nil then
-        neededOffsets^:=length(m.pointeroffsets);
-
-      if offsets<>nil then
-        for i:=0 to maxoffsets-1 do
-          offsets[i]:=m.pointeroffsets[i];
+        neededOffsets^:=m.offsetCount;
 
       if address<>nil then
         address^:=m.GetRealAddress;
+
+      if offsets<>nil then
+      begin
+        for i:=0 to maxoffsets-1 do
+          offsets[i]:=m.offsets[i].offset;
+      end;
+
+
 
       result:=true;
     end;
@@ -962,11 +970,11 @@ begin
     p:=params;
     if (p.memrec is TMemoryRecord) then
     begin
-      setlength(p.memrec.pointeroffsets, p.offsetcount);
+      p.memrec.offsetCount:=p.offsetcount;
 
       p.memrec.interpretableaddress:=p.address;
       for i:=0 to p.offsetcount-1 do
-        p.memrec.pointeroffsets[i]:=p.offsets[i];
+        p.memrec.offsets[i].offset:=p.offsets[i];
 
       result:=pointer(1);
 
@@ -2473,49 +2481,11 @@ begin
       result:=sl;
     end;
     if pp<>nil then
-      freemem(pp);
-{
-var
-  PT : PTypeData;
-  PI : PTypeInfo;
-  I,J : Longint;
-  PP : PPropList;
-  prI : PPropInfo;
-  s: string;
-begin
-  memo1.clear;
-
-  s:='alBottom';
-
-
-  pp:=nil;
-  j:=GetPropList(button2, pp);
-
-
-  //memo1.lines.add(format('Ordinal property Count : %d',[j]));
-
-  For I:=0 to J-1 do
     begin
-      memo1.lines.add(pp^[i].Name);
-
-
-      if pp^[i].name='Top' then
-      begin
-      if pp^[i].PropType^.Kind<>tkMethod then
-
-       SetPropValue(button2,'Align',2);
-       //TSetPropValue(pp^[i].SetProc)(button2, 'Top', 500);
-
-     // memo1.lines.add(format('Property %d : name=%s',[i, ]));
-
-      //Write('Property ',i+1:3,': ',name:30);
-     // writeln('  Type: ',TypeNames[typinfo.PropType(O,Name)]);
-      end;
-
+      freemem(pp);
+      pp:=nil;
     end;
-  FreeMem(PP);
 
-}
   except
   end;
 end;
