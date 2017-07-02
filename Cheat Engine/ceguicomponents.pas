@@ -105,9 +105,9 @@ published
   property OnColumnClick;
   property OnCompare;
 //  property OnContextPopup;
-//  property OnCustomDraw;
-//  property OnCustomDrawItem;
-//  property OnCustomDrawSubItem;
+  property OnCustomDraw;
+  property OnCustomDrawItem;
+  property OnCustomDrawSubItem;
   property OnData;
   property OnDblClick;
  // property OnDeletion;
@@ -328,7 +328,7 @@ published
  // property OnDragOver;
  // property OnDrawItem;
 //  property OnEndDrag;
-//  property OnDropDown;
+  property OnDropDown;
   property OnEditingDone;
   property OnEnter;
   property OnExit;
@@ -1553,8 +1553,7 @@ initialization
 
   RegisterClass(TPageControl);
   RegisterClass(TTrayIcon);
-
-
+  registerclass(TStatusBar);
 
 
   RegisterPropertyEditor(ClassTypeInfo(TListItems), TCEListView, 'Items', TCEListViewItemsPropertyEditor);

@@ -130,7 +130,7 @@ var
   iswin2kplus: boolean;
   scanpriority: TThreadPriority;
 
-  useAPCtoInjectDLL: boolean;
+  useAPCtoInjectDLL: boolean=false;
 
 
   tempdir: pchar;
@@ -140,6 +140,8 @@ var
   VEHRealContextOnThreadCreation: boolean;
   waitafterguiupdate: boolean;
 
+
+  fontmultiplication: single=1.0; //for some gui stuff
 
 
 implementation

@@ -363,6 +363,12 @@ begin
   result:=1;
 end;
 
+function memoryrecord_disableWithoutExecute(L: PLua_State): integer; cdecl;
+begin
+  result:=0;
+  TMemoryRecord(luaclass_getClassObject(L)).disablewithoutexecute;
+end;
+
 function memoryrecord_setActive(L: PLua_State): integer; cdecl;
 var
   memrec: TMemoryRecord;
@@ -610,6 +616,30 @@ begin
   if lua_gettop(L)>=1 then
     memoryrecord.Extra.stringData.unicode:=lua_toboolean(L, -1);
 
+  if memoryrecord.Extra.stringData.Unicode then
+    memoryrecord.Extra.stringData.codepage:=false;
+end;
+
+function memoryrecord_string_getCodePage(L: PLua_State): integer; cdecl;
+var
+  memoryrecord: Tmemoryrecord;
+begin
+  memoryrecord:=luaclass_getClassObject(L);
+  lua_pushboolean(L, memoryrecord.Extra.stringData.CodePage);
+  result:=1;
+end;
+
+function memoryrecord_string_setCodePage(L: PLua_State): integer; cdecl;
+var
+  memoryrecord: Tmemoryrecord;
+begin
+  result:=0;
+  memoryrecord:=luaclass_getClassObject(L);
+  if lua_gettop(L)>=1 then
+    memoryrecord.Extra.stringData.CodePage:=lua_toboolean(L, -1);
+
+  if memoryrecord.Extra.stringData.CodePage then
+    memoryrecord.Extra.stringData.unicode:=false;
 end;
 
 function memoryrecord_binary_getStartbit(L: PLua_State): integer; cdecl;
@@ -817,6 +847,8 @@ begin
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'setScript', memoryrecord_setScript);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'getActive', memoryrecord_getActive);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'setActive', memoryrecord_setActive);
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'disableWithoutExecute', memoryrecord_disableWithoutExecute);
+
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'getChild', memoryrecord_getChild);
 
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'isSelected', memoryrecord_isSelected);
@@ -852,8 +884,6 @@ begin
   luaclass_addPropertyToTable(L, metatable, userdata, 'Active', memoryrecord_getActive, memoryrecord_setActive);
 
 
-
-
   recordEntries:=Trecordentries.create;
 
   recordEntry.name:='Size';
@@ -864,6 +894,11 @@ begin
   recordEntry.name:='Unicode';
   recordEntry.getf:=memoryrecord_string_getUnicode;
   recordEntry.setf:=memoryrecord_string_setUnicode;
+  recordEntries.add(recordEntry);
+
+  recordEntry.name:='Codepage';
+  recordEntry.getf:=memoryrecord_string_getCodepage;
+  recordEntry.setf:=memoryrecord_string_setCodepage;
   recordEntries.add(recordEntry);
 
   luaclass_addRecordPropertyToTable(L, metatable, userdata, 'String', recordEntries);

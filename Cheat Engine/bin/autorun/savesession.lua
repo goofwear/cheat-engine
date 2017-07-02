@@ -1,3 +1,8 @@
+if getTranslationFolder()~='' then
+  loadPOFile(getTranslationFolder()..'SaveSessions.po')
+end
+
+
 if cheatEngineIs64Bit() then
   if string.find(package.cpath, 'clibs64')==nil then
     package.cpath=package.cpath..[[;.\clibs64\?.dll]]
@@ -17,14 +22,14 @@ function loadMemoryScan_thread(t)
 	  mf=getMainForm()
 
 	  if getOpenedProcessID()==0 then
-		messageDialog("Open a process first", mtError, mbOk)
+		messageDialog(translate("Open a process first"), mtError, mbOK)
 		return
 	  end
 
 
-	   dialog=createOpenDialog()
+	  dialog=createOpenDialog()
 	  dialog.DefaultExt=".CS"
-	  dialog.Filter="Cheat Engine Scan files (*.CS)|*.CS"
+	  dialog.Filter=translate("Cheat Engine Scan files").." (*.CS)|*.CS"
 	  dialog.FilterIndex=1
 
 	  if dialog.execute()==false then return end
@@ -73,8 +78,19 @@ function loadMemoryScan_thread(t)
 	  mf.cbExecutable.setState(cbGrayed)
 	  mf.cbCopyOnWrite.setState(cbGrayed)
 
-	  mf.FromAddress.Lines.Text=string.format("%x", getAddress("kernel32.dll"))
-	  mf.ToAddress.Lines.Text=string.format("%x", getAddress("kernel32.dll")+1)
+    if mf.FromAddress.Lines==nil then
+      mf.FromAddress.Text=string.format("%x", getAddress("kernel32.dll"))    
+    else
+	    mf.FromAddress.Lines.Text=string.format("%x", getAddress("kernel32.dll"))
+    end
+    
+    if mf.ToAddress.Lines==nil then
+      mf.ToAddress.Text=string.format("%x", getAddress("kernel32.dll")+1)        
+    else
+      mf.ToAddress.Lines.Text=string.format("%x", getAddress("kernel32.dll")+1)    
+    end
+    
+	  
 
 	  --first scan
 	  if mf.btnNewScan==nil then --ce 6.4 uses this name, 6.3 still uses the not so normal name
@@ -87,10 +103,19 @@ function loadMemoryScan_thread(t)
   end)
 
 
+  if (savedscancount==nil) then
+    return
+  end
+  
+
 
   ms.waitTillDone() --this would freeze in the main thread in 6.3
 
 
+  
+  
+  
+  
   t.synchronize(function(t)
 
 	  --tell the memscan that there are saved scans
@@ -177,14 +202,14 @@ function saveMemoryScan()
   local i,j
 
   if getOpenedProcessID()==0 then
-    messageDialog("Open a process first and do a scan", mtError, mbOk)
+    messageDialog(translate("Open a process first and do a scan"), mtError, mbOk)
     return
   end
 
 
   local dialog=createSaveDialog()
   dialog.DefaultExt=".CS"
-  dialog.Filter="Cheat Engine Scan files (*.CS)|*.CS"
+  dialog.Filter=translate("Cheat Engine Scan files").." (*.CS)|*.CS"
   dialog.FilterIndex=1
 
   if dialog.execute()==false then return nil end
@@ -305,14 +330,14 @@ SaveScanSession={}
 
 
 SaveScanSession.miSaveScanSession=createMenuItem(mf.Menu)
-SaveScanSession.miSaveScanSession.caption='Save scan session'
+SaveScanSession.miSaveScanSession.caption=translate('Save scan session')
 SaveScanSession.miSaveScanSession.Shortcut='Ctrl+Alt+Shift+S'
 SaveScanSession.miSaveScanSession.OnClick=saveMemoryScan
 mf.Menu.Items[0].insert(9, SaveScanSession.miSaveScanSession)
 
 
 SaveScanSession.miLoadScanSession=createMenuItem(mf.Menu)
-SaveScanSession.miLoadScanSession.caption='Load scan session'
+SaveScanSession.miLoadScanSession.caption=translate('Load scan session')
 SaveScanSession.miLoadScanSession.Shortcut='Ctrl+Alt+Shift+O'
 SaveScanSession.miLoadScanSession.OnClick=loadMemoryScan
 mf.Menu.Items[0].insert(10, SaveScanSession.miLoadScanSession)

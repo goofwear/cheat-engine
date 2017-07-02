@@ -7,7 +7,7 @@ interface
 {$ifdef windows}
 uses
   Windows, forms, graphics, Classes, SysUtils, controls, stdctrls, comctrls,symbolhandler,
-  cefuncproc,newkernelhandler, autoassembler, hotkeyhandler, dom, XMLRead,XMLWrite,
+  cefuncproc,newkernelhandler, hotkeyhandler, dom, XMLRead,XMLWrite,
   customtypehandler, fileutil, LCLProc, commonTypeDefs, pointerparser, LazUTF8, LuaClass;
 {$endif}
 
@@ -42,6 +42,7 @@ type TMemrecOptions=set of TMemrecOption;
 
 type TMemrecStringData=record
   unicode: boolean;
+  codepage: boolean;
   length: integer;
   ZeroTerminate: boolean;
 end;
@@ -70,9 +71,12 @@ type TMemRecExtraData=record
   end;
 
 
+
+
 type
   TMemoryRecordHotkey=class;
   TMemoryRecord=class;
+  TMemoryRecordProcessingThread=class;
 
   TMemrecOffset=class
   private
@@ -91,6 +95,9 @@ type
     fOnlyUpdateAfterInterval: boolean;
     fOnlyUpdateWithReinterpret: boolean;
     fUpdateInterval: dword;
+
+    lastOffsetBase: ptruint;
+
     LastUpdateInterval: qword;
     forced: boolean; //set to true if you wish to let getOffset ignore the no-update rules
 
@@ -118,6 +125,7 @@ type
 
 
   TMemoryRecordActivateEvent=function (sender: TObject; before, currentstate: boolean): boolean of object;
+  TGetDisplayValueEvent=function(sender: TObject; var value: string): boolean of object;
 
   TMemoryRecord=class
   private
@@ -166,12 +174,25 @@ type
     fDropDownDescriptionOnly: boolean;
     fDisplayAsDropDownListItem: boolean;
 
+    fDropDownLinked: boolean;
+    fDropDownLinkedMemrec: string;
+    linkedDropDownMemrec: TMemoryRecord;
+    OldlinkedDropDownMemrecOnDestroy: TNotifyEvent;
+
+
     fDontSave: boolean;
+
+    fAsync: boolean;
+    processingThread: TMemoryRecordProcessingThread; //not nil when doing work
+    processingTimeStart: qword;
+    wantedstate: boolean; //last state the user wanted to set it to
+
 
     luaref: integer; //luaclass object to this instance
 
     fonactivate, fondeactivate: TMemoryRecordActivateEvent;
     fOnDestroy: TNotifyEvent;
+    fOnGetDisplayValue: TGetDisplayValueEvent;
 
     fpointeroffsets: array of TMemrecOffset; //if longer than 0, this is a pointer
     function getPointerOffset(index: integer): TMemrecOffset;
@@ -208,8 +229,20 @@ type
     function getDropDownValue(index: integer): string;
     function getDropDownDescription(index: integer): string;
 
+    function getDropDownReadOnly: boolean;
+    function getDropDownDescriptionOnly: boolean;
+    function getDisplayAsDropDownListItem: boolean;
+
+
+
     function GetCollapsed: boolean;
     procedure SetCollapsed(state: boolean);
+
+    procedure processingDone; //called by the processingThread when finished
+
+    procedure OnLinkedMemrecDestroy(Sender: TObject);
+
+    function getlinkedDropDownMemrec: TMemoryRecord;
   public
 
 
@@ -285,6 +318,8 @@ type
 
     procedure cleanupPointerOffsets;
     function getLuaRef: integer;
+    function isProcessing: boolean;
+    function getProcessingTime: qword;
 
     constructor Create(AOwner: TObject);
     destructor destroy; override;
@@ -320,10 +355,13 @@ type
     property ShowAsHex: boolean read fShowAsHex write setShowAsHex;
     property ShowAsSigned: boolean read getShowAsSigned write setShowAsSigned;
     property Options: TMemrecOptions read fOptions write setOptions;
+
+    property DropDownLinked: boolean read fDropDownLinked write fDropDownLinked;
+    property DropDownLinkedMemrec: string read fDropDownLinkedMemrec write fDropDownLinkedMemrec;
     property DropDownList: TStringlist read fDropDownList;
-    property DropDownReadOnly: boolean read fDropDownReadOnly write fDropDownReadOnly;
-    property DropDownDescriptionOnly: boolean read fDropDownDescriptionOnly write fDropDownDescriptionOnly;
-    property DisplayAsDropDownListItem: boolean read fDisplayAsDropDownListItem write fDisplayAsDropDownListItem;
+    property DropDownReadOnly: boolean read getDropDownReadOnly write fDropDownReadOnly;
+    property DropDownDescriptionOnly: boolean read getDropDownDescriptionOnly write fDropDownDescriptionOnly;
+    property DisplayAsDropDownListItem: boolean read getDisplayAsDropDownListItem write fDisplayAsDropDownListItem;
     property DropDownCount: integer read getDropDownCount;
     property DropDownValue[index:integer]: string read getDropDownValue;
     property DropDownDescription[index:integer]: string read getDropDownDescription;
@@ -331,8 +369,11 @@ type
     property OnActivate: TMemoryRecordActivateEvent read fOnActivate write fOnActivate;
     property OnDeactivate: TMemoryRecordActivateEvent read fOnDeActivate write fOndeactivate;
     property OnDestroy: TNotifyEvent read fOnDestroy write fOnDestroy;
-    property offsetCount: integer read getoffsetCount write setOffsetCount;
-
+    property OnGetDisplayValue: TGetDisplayValueEvent read fOnGetDisplayValue write fOnGetDisplayValue;
+    property OffsetCount: integer read getoffsetCount write setOffsetCount;
+    property Async: Boolean read fAsync write fAsync;
+    property AsyncProcessing: Boolean read isProcessing;
+    property AsyncProcessingTime: qword read getProcessingTime;
   end;
 
   THKSoundFlag=(hksPlaySound=0, hksSpeakText=1, hksSpeakTextEnglish=2); //playSound excludes speakText
@@ -351,8 +392,8 @@ type
     fDescription: string;
     fOwner: TMemoryRecord;
     keys: Tkeycombo;
-    action: TMemrecHotkeyAction;
-    value: string;
+    fAction: TMemrecHotkeyAction;
+    fValue: string;
 
 
     procedure playActivateSound;
@@ -368,10 +409,21 @@ type
     property ActivateSound: string read factivateSound write factivateSound;
     property DeactivateSound: string read fdeactivateSound write fdeactivateSound;
     property Description: string read fDescription write fDescription;
+    property Action: TMemrecHotkeyAction read fAction write fAction;
+    property Value: string read fValue write fValue;
     property Owner: TMemoryRecord read fOwner;
     property ID: integer read fID;
     property OnHotkey: TNotifyEvent read fOnHotkey write fOnHotkey;
     property OnPostHotkey: TNotifyEvent read fOnPostHotkey write fOnPostHotkey;
+  end;
+
+  TMemoryRecordProcessingThread=class(TThread)
+  private
+    owner: TMemoryRecord;
+    state: boolean;
+  public
+    procedure Execute; override;
+    constructor Create(o: TMemoryRecord; s: boolean);
   end;
 
 
@@ -382,12 +434,38 @@ implementation
 
 {$ifdef windows}
 uses mainunit, addresslist, formsettingsunit, LuaHandler, lua, lauxlib, lualib,
-  processhandlerunit, Parsers, winsapi;
+  processhandlerunit, Parsers, winsapi,autoassembler;
 {$endif}
 
 {$ifdef unix}
 uses processhandlerunit, Parsers;
 {$endif}
+
+{---------------------TMemoryRecordProcessingThread-------------------------}
+procedure TMemoryRecordProcessingThread.Execute;
+begin
+  try
+    if autoassemble(owner.autoassemblerdata.script, false, state, false, false, owner.autoassemblerdata.allocs, owner.autoassemblerdata.registeredsymbols, owner) then
+    begin
+      owner.fActive:=state;
+      if owner.autoassemblerdata.registeredsymbols.Count>0 then //if it has a registered symbol then reinterpret all addresses
+        TAddresslist(owner.fOwner).ReinterpretAddresses;
+    end;
+  except
+    //running the script failed, state unchanged
+    on e:exception do
+      OutputDebugString(e.message);
+  end;
+
+  Queue(owner.processingDone);
+end;
+
+constructor TMemoryRecordProcessingThread.Create(o: TMemoryRecord; s: boolean);
+begin
+  owner:=o;
+  state:=s;
+  inherited create(false);
+end;
 
 {-----------------------------TMemrecOffset---------------------------------}
 
@@ -398,7 +476,7 @@ end;
 
 function TMemrecOffset.getOffsetNoBase: integer;
 begin
-  result:=getOffset(0);
+  result:=getOffset(lastOffsetBase);
 end;
 
 function TMemrecOffset.getOffset(currentBase: ptruint): integer;
@@ -407,6 +485,7 @@ var
   memrecluaobjectref: integer;
   stack: integer;
 begin
+  lastOffsetBase:=currentbase;
   if special then
   begin
     if (not forced) then
@@ -418,7 +497,7 @@ begin
     else
       forced:=false;
 
-    LastUpdateInterval:=GetTickCount;
+    LastUpdateInterval:=GetTickCount64;
 
 
     finvalid:=true;
@@ -426,36 +505,55 @@ begin
     foffset:=0;
 
     //parse it/call the lua function
-    if luaref=-1 then
-      foffset:=symhandler.getAddressFromName(text, false, finvalid)
-    else
+    if luaref<>-1 then
     begin
+      {$ifndef JNI}
       memrecluaobjectref:=fowner.getLuaRef;
 
-      LUACS.Enter;
+      stack:=lua_Gettop(luavm);
       try
-        stack:=lua_Gettop(luavm);
-
         lua_rawgeti(Luavm, LUA_REGISTRYINDEX, LuaRef);
         lua_rawgeti(Luavm, LUA_REGISTRYINDEX, memrecluaobjectref);
         lua_pushinteger(luavm, currentBase);
 
         if lua_pcall(Luavm, 2, 1,0)=0 then
+        begin
           if lua_isnumber(Luavm, -1) then
           begin
             foffset:=lua_tointeger(Luavm, -1);
             finvalid:=false;
+          end
+          else
+          begin
+            funparsed:=true;
+            cleanupluaref;
           end;
+        end
+        else
+        begin
+          funparsed:=true;
+          cleanupluaref;
+        end;
 
         lua_pop(luavm, 1);
 
       finally
         lua_settop(luavm, stack);
-        luacs.Leave;
       end;
 
+      if funparsed then
+        setoffsetText(text);   //will be fixed next run
 
+      {$endif}
     end;
+
+    if luaref=-1 then
+    begin
+      foffset:=symhandler.getAddressFromName(text, false, finvalid);
+      if finvalid then
+        setoffsetText(text);
+    end;
+
 
     if not finvalid then
       hasValue:=true;
@@ -468,11 +566,13 @@ end;
 
 procedure TMemrecOffset.cleanupluaref;
 begin
+  {$ifndef JNI}
   if luaref<>-1 then //dereference this lua function
   begin
     luaL_unref(LuaVM, LUA_REGISTRYINDEX, luaref);
     luaref:=-1;
   end;
+  {$endif}
 end;
 
 procedure TMemrecOffset.setOffset(o: integer);
@@ -497,47 +597,52 @@ begin
     funparsed:=false;
     exit;
   except
+    foffset:=symhandler.getAddressFromNameShallow(s, false, e);
+    if not e then
+    begin
+      funparsed:=false;
+      exit;
+    end;
   end;
 
 
   special:=true;
-  //parse it as a symbolhandler text, if that fails, try lua
 
-  foffset:=symhandler.getAddressFromName(s, false, e);
-  if e then
-  begin
-    //try lua
-    s2:='memrec, address=... return '+s;
-
-
-    LUACS.Enter;
-    try
-      stack:=lua_Gettop(luavm);
-      if luaL_loadstring(luavm, pchar(s2))=0 then
-        if lua_isfunction(luavm,-1) then //store a reference to this function
-          luaref:=luaL_ref(luavm, LUA_REGISTRYINDEX);
-
-    finally
-      lua_settop(luavm, stack);
-      LuaCS.Leave;
-    end;
-
-    funparsed:=luaref=-1;
-
-    if not funparsed then
-    begin
-      //call it to be sure it's ok and not returning nil
-      forceUpdate;
-      getOffsetNoBase;
-      if finvalid then
+  //parse it as lua (because that can be called by ref, which is faster, and gets the memrec and address variables), if that fails, try the symbolhandler
+  s2:='local memrec, address=... ; return '+s;
+  stack:=lua_Gettop(luavm);
+  try
+    if luaL_loadstring(luavm, pchar(s2))=0 then
+      if lua_isfunction(luavm,-1) then //store a reference to this function
       begin
-        funparsed:=true;
-        cleanupluaref;
+        lua_pushvalue(LuaVM,-1);
+        lua_rawgeti(Luavm, LUA_REGISTRYINDEX, fowner.getLuaRef);
+        lua_pushinteger(luavm, lastOffsetBase);
+        if lua_pcall(Luavm, 2,1,0)=0 then
+        begin
+          if lua_isnumber(luavm,-1) then
+          begin
+            lua_pop(luavm,1);
+
+            if lua_isfunction(luavm,-1) then
+              luaref:=luaL_ref(luavm, LUA_REGISTRYINDEX)
+            else
+              raise exception.create('Invalid lua state');
+          end;
+        end;
+
       end;
-    end;
 
-  end else funparsed:=false;
+  finally
+    lua_settop(luavm, stack);
+  end;
+  funparsed:=luaref=-1;
 
+  if funparsed then
+  begin
+    foffset:=symhandler.getAddressFromName(s, false, e);
+    funparsed:=e;
+  end;
 end;
 
 constructor TMemrecOffset.create(owner: TMemoryRecord);
@@ -573,6 +678,7 @@ begin
   UnregisterAddressHotkey(self);
 {$endif}
 
+
   //remove this hotkey from the memoryrecord
   if owner<>nil then
     owner.hotkeylist.Remove(self);
@@ -593,6 +699,7 @@ end;
 procedure TMemoryRecordHotkey.playActivateSound;
 var s: string;
 begin
+{$ifdef windows}
   if activateSound<>'' then
   begin
     if ActivateSoundFlag in [hksSpeakText, hksSpeakTextEnglish] then
@@ -611,11 +718,14 @@ begin
     else
       LUA_DoScript('playSound(findTableFile([['+activateSound+']]))');
   end;
+{$endif}
+
 end;
 
 procedure TMemoryRecordHotkey.playDeactivateSound;
 var s: string;
 begin
+  {$ifdef windows}
   if DeactivateSound<>'' then
   begin
     if DeactivateSoundFlag in [hksSpeakText, hksSpeakTextEnglish] then
@@ -632,6 +742,7 @@ begin
     else
       LUA_DoScript('playSound(findTableFile([['+deactivateSound+']]))');
   end;
+  {$endif}
 end;
 
 
@@ -639,32 +750,66 @@ end;
 
 function TMemoryRecord.GetCollapsed: boolean;
 begin
+  {$ifndef unix}
   result:=not treenode.Expanded;
+  {$endif}
 end;
 
 procedure TMemoryRecord.SetCollapsed(state: boolean);
 begin
+  {$ifndef unix}
   if state then
     treenode.Collapse(false)
   else
     treenode.Expand(false);
+  {$endif}
 end;
 
 
 function TMemoryRecord.getDropDownCount: integer;
+var mr: tmemoryrecord;
 begin
+  if DropDownLinked then
+  begin
+    mr:=getlinkedDropDownMemrec;
+    if mr<>nil then
+      exit(mr.getDropDownCount)
+    else
+      exit(0);
+  end;
+
   result:=fDropDownList.count;
 end;
 
 function TMemoryRecord.getDropDownValue(index: integer): string;
+var mr: tmemoryrecord;
 begin
+  if DropDownLinked then
+  begin
+    mr:=getlinkedDropDownMemrec;
+    if mr<>nil then
+      exit(mr.getDropDownValue(index))
+    else
+      exit('');
+  end;
+
   result:='';
   if index<DropDownCount then
     result:=copy(fDropDownList[index], 1, pos(':', fDropDownList[index])-1);
 end;
 
 function TMemoryRecord.getDropDownDescription(index: integer): string;
+var mr: tmemoryrecord;
 begin
+  if DropDownLinked then
+  begin
+    mr:=getlinkedDropDownMemrec;
+    if mr<>nil then
+      exit(mr.getDropDownDescription(index))
+    else
+      exit('');
+  end;
+
   result:='';
   if index<DropDownCount then
     result:=copy(fDropDownList[index], pos(':', fDropDownList[index])+1, length(fDropDownList[index]));
@@ -672,13 +817,77 @@ end;
 
 function TMemoryRecord.getCurrentDropDownIndex: integer;
 var i: integer;
+    mr: tmemoryrecord;
 begin
+  if DropDownLinked then
+  begin
+    mr:=getlinkedDropDownMemrec;
+    if mr<>nil then
+      begin
+        result:=-1;
+        for i:=0 to mr.DropDownCount-1 do
+        begin
+          if lowercase(Value)=lowercase(mr.DropDownValue[i]) then
+            result:=i;
+        end;
+        exit;
+      end
+    else
+      exit(-1);
+  end;
+
+
   result:=-1;
   for i:=0 to DropDownCount-1 do
   begin
     if lowercase(Value)=lowercase(DropDownValue[i]) then
       result:=i;
   end;
+end;
+
+function TMemoryRecord.getDropDownReadOnly: boolean;
+var mr: TMemoryRecord;
+begin
+  if DropDownLinked then
+  begin
+    mr:=getlinkedDropDownMemrec;
+    if mr<>nil then
+      exit(mr.getDropDownReadOnly)
+    else
+      exit(false);
+  end
+  else
+    result:=fDropDownReadOnly;
+end;
+
+function TMemoryRecord.getDropDownDescriptionOnly: boolean;
+var mr: TMemoryRecord;
+begin
+  if DropDownLinked then
+  begin
+    mr:=getlinkedDropDownMemrec;
+    if mr<>nil then
+      exit(mr.getDropDownDescriptionOnly)
+    else
+      exit(false);
+  end
+  else
+    result:=fDropDownDescriptionOnly;
+end;
+
+function TMemoryRecord.getDisplayAsDropDownListItem: boolean;
+var mr: TMemoryRecord;
+begin
+  if DropDownLinked then
+  begin
+    mr:=getlinkedDropDownMemrec;
+    if mr<>nil then
+      exit(mr.getDisplayAsDropDownListItem)
+    else
+      exit(false);
+  end
+  else
+    result:=fDisplayAsDropDownListItem;
 
 end;
 
@@ -727,12 +936,14 @@ end;
 
 function TMemoryRecord.getLuaRef: integer;
 begin
+  {$ifndef unix}
   if luaref=-1 then
   begin
     luaclass_newClass(luavm, self);
     luaref:=luaL_ref(luavm, LUA_REGISTRYINDEX);
   end;
 
+  {$endif}
   result:=luaref;
 end;
 
@@ -756,6 +967,19 @@ end;
 destructor TMemoryRecord.destroy;
 var i: integer;
 begin
+  if processingThread<>nil then
+  begin
+    processingThread.Terminate;
+    processingThread.WaitFor;
+    freeandnil(processingThread);
+  end;
+
+  if linkedDropDownMemrec<>nil then
+  begin
+    linkedDropDownMemrec.OnDestroy:=OldlinkedDropDownMemrecOnDestroy;
+    linkedDropDownMemrec:=nil;
+  end;
+
   if assigned(fOnDestroy) then
     fOnDestroy(self);
 
@@ -788,9 +1012,10 @@ begin
 
   if fDropDownList<>nil then
     freeandnil(fDropDownList);
-
+  {$ifndef unix}
   if luaref<>-1 then
     luaL_unref(LuaVM, LUA_REGISTRYINDEX, luaref);
+  {$endif}
 
   inherited Destroy;
 
@@ -832,6 +1057,15 @@ begin
     begin
       fvartype:=vtString;
       extra.stringData.unicode:=true;
+      extra.stringData.codepage:=false;
+      extra.stringData.ZeroTerminate:=true;
+    end;
+
+    vtCodePageString:
+    begin
+      fvartype:=vtString;
+      extra.stringData.unicode:=false;
+      extra.stringData.codepage:=true;
       extra.stringData.ZeroTerminate:=true;
     end;
 
@@ -934,6 +1168,13 @@ begin
     end;
   end;
 
+
+  tempnode:=CheatEntry.FindNode('DropDownListLink');
+  if tempnode<>nil then
+  begin
+    fDropDownLinked:=true;
+    fDropDownLinkedMemrec:=tempnode.TextContent;
+  end;
 
   tempnode:=CheatEntry.FindNode('DropDownList');
   if tempnode<>nil then
@@ -1047,6 +1288,10 @@ begin
         if tempnode<>nil then
           extra.stringData.Unicode:=tempnode.TextContent='1';
 
+        tempnode:=CheatEntry.FindNode('CodePage');
+        if tempnode<>nil then
+          extra.stringData.Codepage:=tempnode.TextContent='1';
+
         tempnode:=CheatEntry.FindNode('ZeroTerminate');
         if tempnode<>nil then
           extra.stringdata.ZeroTerminate:=tempnode.TextContent='1';
@@ -1075,6 +1320,8 @@ begin
           AutoAssemblerData.script:=tstringlist.Create;
           AutoAssemblerData.script.text:=tempnode.TextContent;
 
+          a:=tempnode.Attributes.GetNamedItem('Async');
+          if (a<>nil) then fAsync:=a.TextContent='1';
         end;
       end;
 
@@ -1241,7 +1488,7 @@ end;
 function TMemoryRecord.hasParent: boolean;
 begin
   {$IFNDEF UNIX}
-  result:=treenode.parent<>nil;
+  result:=(treenode<>nil) and (treenode.parent<>nil);
   {$ENDIF}
 end;
 
@@ -1277,6 +1524,8 @@ var
   opt: TDOMNode;
   laststate: TDOMNode;
   soundentry: TDOMNode;
+
+  n: TDOMNode;
 
   tn: TTreenode;
   i,j: integer;
@@ -1356,12 +1605,14 @@ begin
       a.TextContent:='1';
       opt.Attributes.SetNamedItem(a);
     end;
-
-
-
-
   end;
 
+  if DropDownLinked then
+  begin
+    ddl:=cheatEntry.AppendChild(doc.CreateElement('DropDownListLink'));
+    ddl.TextContent:=DropDownLinkedMemrec;
+  end
+  else
   if DropDownList.Count>0 then
   begin
     ddl:=cheatEntry.AppendChild(doc.CreateElement('DropDownList'));
@@ -1456,6 +1707,7 @@ begin
       begin
         cheatEntry.AppendChild(doc.CreateElement('Length')).TextContent:=inttostr(extra.stringData.length);
         cheatEntry.AppendChild(doc.CreateElement('Unicode')).TextContent:=BoolToStr(extra.stringData.unicode,'1','0');
+        cheatEntry.AppendChild(doc.CreateElement('CodePage')).TextContent:=BoolToStr(extra.stringData.codepage,'1','0');
         cheatEntry.AppendChild(doc.CreateElement('ZeroTerminate')).TextContent:=BoolToStr(extra.stringData.ZeroTerminate,'1','0');
 
       end;
@@ -1467,7 +1719,15 @@ begin
 
       vtAutoAssembler:
       begin
-        cheatEntry.AppendChild(doc.CreateElement('AssemblerScript')).TextContent:=AutoAssemblerData.script.Text;
+        n:=cheatEntry.AppendChild(doc.CreateElement('AssemblerScript'));
+        if fAsync then
+        begin
+          a:=doc.CreateAttribute('Async');
+          a.TextContent:='1';
+          n.Attributes.SetNamedItem(a);
+        end;
+
+        n.TextContent:=AutoAssemblerData.script.Text;
       end;
     end;
 
@@ -1621,7 +1881,7 @@ end;
 
 function TMemoryRecord.isBeingEdited: boolean;
 begin
-  result:=editcount>0;
+  result:=(editcount>0);
 end;
 
 procedure TMemoryRecord.beginEdit;
@@ -1768,17 +2028,18 @@ begin
       end
       else
       begin
-        if VarType in [vtByte, vtWord, vtDword, vtQword, vtCustom] then
+        if (VarType in [vtSingle, vtDouble]) or
+           ((VarType=vtCustom) and (customtype<>nil) and customtype.scriptUsesFloat) then
+        begin
+          oldvaluedouble:=StrToFloat(getValue);
+          increasevalueDouble:=StrToFloatEx(value);
+          setvalue(FloatToStr(oldvaluedouble+increasevalueDouble));
+        end
+        else
         begin
           oldvalue:=StrToQWordEx(getvalue);
           increasevalue:=StrToQWordEx(value);
           setvalue(IntToStr(oldvalue+increasevalue));
-        end
-        else
-        begin
-          oldvaluedouble:=StrToFloat(getValue);
-          increasevalueDouble:=StrToFloat(value);
-          setvalue(FloatToStr(oldvaluedouble+increasevalueDouble));
         end;
       end;
     except
@@ -1794,7 +2055,7 @@ var
   decreasevalue: qword;
   decreasevaluedouble: double;
 begin
-  if VarType in [vtByte, vtWord, vtDword, vtQword, vtSingle, vtDouble] then
+  if VarType in [vtByte, vtWord, vtDword, vtQword, vtSingle, vtDouble, vtCustom] then
   begin
     try
       if showAsHex then //separate handler for hexadecimal. (handle as int, even for the float types)
@@ -1805,17 +2066,18 @@ begin
       end
       else
       begin
-        if VarType in [vtByte, vtWord, vtDword, vtQword] then
+        if (VarType in [vtSingle, vtDouble]) or
+           ((VarType=vtCustom) and (customtype<>nil) and customtype.scriptUsesFloat) then
+        begin
+          oldvaluedouble:=StrToFloat(getValue);
+          decreasevalueDouble:=StrToFloatEx(value);
+          setvalue(FloatToStr(oldvaluedouble-decreasevalueDouble));
+        end
+        else
         begin
           oldvalue:=StrToQWordEx(getvalue);
           decreasevalue:=StrToQWordEx(value);
           setvalue(IntToStr(oldvalue-decreasevalue));
-        end
-        else
-        begin
-          oldvaluedouble:=StrToFloat(getValue);
-          decreasevalueDouble:=StrToFloat(value);
-          setvalue(FloatToStr(oldvaluedouble-decreasevalueDouble));
         end;
       end;
     except
@@ -1941,11 +2203,72 @@ begin
   {$ENDIF}
 end;
 
+function TMemoryRecord.isProcessing: boolean;
+begin
+  result:=processingThread<>nil;
+end;
+
+function TMemoryRecord.getProcessingTime: qword;
+begin
+  if isProcessing then
+    result:=GetTickCount64-processingTimeStart
+  else
+    result:=0;
+end;
+
+procedure TMemoryRecord.processingDone;
+//called after an aa script has finished processing
+var i: integer;
+begin
+  if not fActive then
+  begin
+    //on disable or failure setting the state to true, also reset the option if it's allowed to increase/decrease
+    allowDecrease:=false;
+    allowIncrease:=false;
+  end;
+
+  if processingThread<>nil then
+    freeandnil(processingThread);
+
+  {$IFNDEF UNIX}
+  treenode.update;
+  {$ENDIF}
+
+  {$IFNDEF UNIX}
+  if active and (moActivateChildrenAsWell in options) then
+  begin
+    //apply this state to all the children
+    for i:=0 to treenode.Count-1 do
+      TMemoryRecord(treenode[i].data).setActive(true);
+  end;
+
+  if (not active) and (moDeactivateChildrenAsWell in options) then
+  begin
+    //apply this state to all the children
+    for i:=0 to treenode.Count-1 do
+      TMemoryRecord(treenode[i].data).setActive(false);
+  end;
+  {$ENDIF}
+
+  //6.5+
+{$ifndef unix}
+  LUA_functioncall('onMemRecPostExecute',[self, wantedstate, fActive=wantedstate]);
+{$endif}
+
+  //6.1+
+  if wantedstate and assigned(fonactivate) then fonactivate(self, false, factive); //activated , after
+  if not wantedstate and assigned(fondeactivate) then fondeactivate(self, false, factive); //deactivated , after
+
+  SetVisibleChildrenState;
+end;
+
 procedure TMemoryRecord.setActive(state: boolean);
 var f: string;
     i: integer;
 begin
   if state=fActive then exit; //no need to execute this is it's the same state
+  if processingThread<>nil then exit; //don't change the state while processing
+
   outputdebugstring('setting active state with description:'+description+' to '+BoolToStr(state,true));
 
 { deprecated
@@ -1958,7 +2281,9 @@ begin
 }
 
   //6.5+
+  {$ifndef unix}
   LUA_functioncall('onMemRecPreExecute',[self, state]);
+  {$endif}
 
   //6.1+
   if state then
@@ -1972,6 +2297,7 @@ begin
       if not fondeactivate(self, true, fActive) then exit; //do not deactivate if it returns false
   end;
 
+  wantedstate:=state;
 
   if not fisGroupHeader then
   begin
@@ -1979,18 +2305,32 @@ begin
     begin
       {$IFNDEF UNIX}
       //aa script
-      try
-        if autoassemblerdata.registeredsymbols=nil then
-          autoassemblerdata.registeredsymbols:=tstringlist.create;
+      if autoassemblerdata.registeredsymbols=nil then
+        autoassemblerdata.registeredsymbols:=tstringlist.create;
 
-        if autoassemble(autoassemblerdata.script, false, state, false, false, autoassemblerdata.allocs, autoassemblerdata.registeredsymbols) then
-        begin
-          fActive:=state;
-          if autoassemblerdata.registeredsymbols.Count>0 then //if it has a registered symbol then reinterpret all addresses
-            TAddresslist(fOwner).ReinterpretAddresses;
+
+
+      if async then
+      begin
+        //spawn a thread to activate this entry.
+        //set the state to "Activating"
+        processingTimeStart:=gettickcount64;
+        processingThread:=TMemoryRecordProcessingThread.Create(self,state);
+        treenode.update;
+        exit;
+      end
+      else
+      begin
+        try
+          if autoassemble(autoassemblerdata.script, false, state, false, false, autoassemblerdata.allocs, autoassemblerdata.registeredsymbols, self) then
+          begin
+            fActive:=state;
+            if autoassemblerdata.registeredsymbols.Count>0 then //if it has a registered symbol then reinterpret all addresses
+              TAddresslist(fOwner).ReinterpretAddresses;
+          end;
+        except
+          //running the script failed, state unchanged
         end;
-      except
-        //running the script failed, state unchanged
       end;
       {$ENDIF}
 
@@ -2030,48 +2370,7 @@ begin
   end else fActive:=state;
 
 
-  if state=false then
-  begin
-    //on disable or failure setting the state to true, also reset the option if it's allowed to increase/decrease
-    allowDecrease:=false;
-    allowIncrease:=false;
-  end;
-
-  {$IFNDEF UNIX}
-  treenode.update;
-  if active and (moActivateChildrenAsWell in options) then
-  begin
-    //apply this state to all the children
-    for i:=0 to treenode.Count-1 do
-      TMemoryRecord(treenode[i].data).setActive(true);
-  end;
-
-  if (not active) and (moDeactivateChildrenAsWell in options) then
-  begin
-    //apply this state to all the children
-    for i:=0 to treenode.Count-1 do
-      TMemoryRecord(treenode[i].data).setActive(false);
-  end;
-  {$ENDIF}
-
-{ deprecated
-
-  //6.0 compatibility
-  if state then
-    LUA_memrec_callback(self, '_memrec_'+description+'_activated')
-  else
-    LUA_memrec_callback(self, '_memrec_'+description+'_deactivated');
-}
-
-  //6.5+
-  LUA_functioncall('onMemRecPostExecute',[self, state, fActive=state]);
-
-  //6.1+
-  if state and assigned(fonactivate) then fonactivate(self, false, factive); //activated , after
-  if not state and assigned(fondeactivate) then fondeactivate(self, false, factive); //deactivated , after
-
-  SetVisibleChildrenState;
-
+  processingDone;
 end;
 
 procedure TMemoryRecord.setVisible(state: boolean);
@@ -2305,16 +2604,18 @@ var
   c: integer;
 begin
   result:=getValue;
+  if assigned(fOnGetDisplayValue) and fOnGetDisplayValue(self, result) then exit;
+
   c:=DropDowncount;
 
-  if fDisplayAsDropDownListItem and (c>0) then
+  if getDisplayAsDropDownListItem and (c>0) then
   begin
     //convert the value to a dropdown list item value
     for i:=0 to c-1 do
     begin
       if uppercase(utf8toansi(DropDownValue[i]))=uppercase(result) then
       begin
-        if fDropDownDescriptionOnly then
+        if getDropDownDescriptionOnly then
           result:=utf8toansi(DropDownDescription[i])
         else
           result:=result+' : '+utf8toansi(DropDownDescription[i]);
@@ -2378,7 +2679,9 @@ begin
           if customtype.scriptUsesFloat then
             result:=FloatToStr(customtype.ConvertDataToFloat(buf, RealAddress))
           else
-            if showashex then result:=inttohex(customtype.ConvertDataToInteger(buf, RealAddress),8) else if showassigned then result:=inttostr(integer(customtype.ConvertDataToInteger(buf, RealAddress))) else result:=inttostr(customtype.ConvertDataToInteger(buf, RealAddress));
+            if showashex         then result:=inttohex(customtype.ConvertDataToInteger(buf, RealAddress),8) 
+            else if showassigned then result:=inttostr(integer(customtype.ConvertDataToInteger(buf, RealAddress)))
+            else                      result:=inttostr(dword(customtype.ConvertDataToInteger(buf, RealAddress)));
         end
         else
           result:=rsError;
@@ -2399,6 +2702,11 @@ begin
         begin
           pba[bufsize-2]:=0;
           result:=UTF16ToUTF8(wc)
+        end
+        else
+        if Extra.stringData.codepage then
+        begin
+          result:=WinCPToUTF8(c);
         end
         else
           result:=c;
@@ -2492,7 +2800,6 @@ var
 
   unparsedvalue: string;
   check: boolean;
-  fs: TFormatSettings;
 
   oldluatop: integer;
 begin
@@ -2564,7 +2871,7 @@ begin
   if (vartype=vtbinary) and (bufsize=3) then bufsize:=4;
   if (vartype=vtbinary) and (bufsize>4) then bufsize:=8;
 
-  getmem(buf,bufsize);
+  getmem(buf,bufsize+2);
 
 
 
@@ -2584,15 +2891,13 @@ begin
       CurrentValue:=trim(CurrentValue);
       if (length(CurrentValue)>2) and (CurrentValue[1]='[') and (currentValue[length(CurrentValue)]=']') then
       begin
-        LuaCS.enter;
+
+        oldluatop:=lua_gettop(luavm);
         try
-          oldluatop:=lua_gettop(luavm);
           if lua_dostring(luavm, pchar('return '+copy(CurrentValue,2, length(CurrentValue)-2)))=0 then
             currentValue:=lua_tostring(luavm, -1);
-
-          lua_settop(luavm, oldluatop);
         finally
-          luacs.Leave;
+          lua_settop(luavm, oldluatop);
         end;
       end;
     end;
@@ -2604,7 +2909,7 @@ begin
         if customtype<>nil then
         Begin
           if customtype.scriptUsesFloat then
-            customtype.ConvertFloatToData(strtofloat(currentValue), ps, RealAddress)
+            customtype.ConvertFloatToData(StrToFloatEx(currentValue), ps, RealAddress)
           else
             customtype.ConvertIntegerToData(strtoint(currentValue), pdw, RealAddress);
 
@@ -2617,34 +2922,10 @@ begin
       vtDword: pdw^:=StrToQWordEx(currentValue);
       vtQword: pqw^:=StrToQWordEx(currentValue);
       vtSingle: if (not fShowAsHex) or (not TryStrToInt('$'+currentvalue, li^)) then
-      begin
-        try
-          fs:=DefaultFormatSettings;
-          ps^:=StrToFloat(currentValue, fs);
-        except
-          if fs.DecimalSeparator='.' then
-            fs.DecimalSeparator:=','
-          else
-          fs.DecimalSeparator:='.';
-
-          ps^:=StrToFloat(currentValue, fs);
-        end;
-      end;
+        ps^:=StrToFloatEx(currentValue);
 
       vtDouble: if (not fShowAsHex) or (not TryStrToQWord('$'+currentvalue, li64^)) then
-      begin
-        try
-          fs:=DefaultFormatSettings;
-          pd^:=StrToFloat(currentValue, fs);
-        except
-          if fs.DecimalSeparator='.' then
-            fs.DecimalSeparator:=','
-          else
-          fs.DecimalSeparator:='.';
-
-          pd^:=StrToFloat(currentValue, fs);
-        end;
-      end;
+        pd^:=StrToFloatEx(currentValue);
 
       vtBinary:
       begin
@@ -2677,14 +2958,13 @@ begin
         begin
           extra.stringData.length:=length(currentValue);
           freemem(buf);
-          bufsize:=getbytesize;
+          bufsize:=getbytesize+2;
           getmem(buf, bufsize);
         end;
 
         x:=bufsize;
         if extra.stringData.unicode then
           x:=bufsize div 2; //each character is 2 bytes so only half the size is available
-
 
 
 
@@ -2697,12 +2977,27 @@ begin
         if extra.stringData.unicode then
         begin
           x:=min(x,length(tempsw));
-          CopyMemory(buf, @tempsw[1], x*2)
+          if extra.stringData.ZeroTerminate then
+            inc(x); //include the zero terminator
+
+          if length(tempsw)=0 then
+            zeromemory(buf, x*2)
+          else
+            CopyMemory(buf, @tempsw[1], x*2)
         end
         else
         begin
+          if extra.stringData.codepage then
+            tempsa:=UTF8ToWinCP(tempsa);
+
           x:=min(x,length(tempsa));
-          CopyMemory(buf, @tempsa[1], x);
+          if extra.stringData.ZeroTerminate then
+            inc(x); //include the zero terminator
+
+          if length(tempsa)=0 then
+            zeromemory(buf, x)
+          else
+            CopyMemory(buf, @tempsa[1], x);
         end;
 
         if extra.stringData.unicode then
@@ -2808,26 +3103,49 @@ begin
   self.RealAddress:=result;
 end;
 
+procedure TMemoryRecord.OnLinkedMemrecDestroy(Sender: TObject);
+begin
+  linkedDropDownMemrec:=nil;
+  if assigned(OldlinkedDropDownMemrecOnDestroy) then
+    OldlinkedDropDownMemrecOnDestroy(sender);
+end;
+
+function TMemoryRecord.getlinkedDropDownMemrec: TMemoryRecord;
+begin
+  if linkedDropDownMemrec=nil then
+  begin
+    linkedDropDownMemrec:=TAddresslist(fOwner).getRecordWithDescription(fDropDownLinkedMemrec);
+    if linkedDropDownMemrec<>nil then
+    begin
+      OldlinkedDropDownMemrecOnDestroy:=linkedDropDownMemrec.OnDestroy;
+      linkedDropDownMemrec.OnDestroy:=OnLinkedMemrecDestroy;
+    end;
+  end;
+
+  result:=linkedDropDownMemrec;
+end;
+
+
 
 
 function MemRecHotkeyActionToText(action: TMemrecHotkeyAction): string;
 begin
-  //type TMemrecHotkeyAction=(mrhToggleActivation, mrhToggleActivationAllowIncrease, mrhToggleActivationAllowDecrease, mrhSetValue,
-  //mrhIncreaseValue, mrhDecreaseValue);
+  //DO NOT TRANSLATE THIS
   case action of
-    mrhToggleActivation: result:=rsToggleActivation;
-    mrhToggleActivationAllowIncrease: result:=rsToggleActivationAllowIncrease;
-    mrhToggleActivationAllowDecrease: result:=rsToggleActivationAllowDecrease;
-    mrhActivate: result:=rsActivate;
-    mrhDeactivate: result:=rsDeactivate;
-    mrhSetValue: result:=rsSetValue;
-    mrhIncreaseValue: result:=rsIncreaseValue;
-    mrhDecreaseValue: result:=rsDecreaseValue;
+    mrhToggleActivation: result:='Toggle Activation';
+    mrhToggleActivationAllowIncrease: result:='Toggle Activation Allow Increase';
+    mrhToggleActivationAllowDecrease: result:='Toggle Activation Allow Decrease';
+    mrhActivate: result:='Activate';
+    mrhDeactivate: result:='Deactivate';
+    mrhSetValue: result:='Set Value';
+    mrhIncreaseValue: result:='Increase Value';
+    mrhDecreaseValue: result:='Decrease Value';
   end;
 end;
 
 function TextToMemRecHotkeyAction(text: string): TMemrecHotkeyAction;
 begin
+  //DO NOT TRANSLATE THIS
   if text = 'Toggle Activation' then result:=mrhToggleActivation else
   if text = 'Toggle Activation Allow Increase' then result:=mrhToggleActivationAllowIncrease else
   if text = 'Toggle Activation Allow Decrease' then result:=mrhToggleActivationAllowDecrease else

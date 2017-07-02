@@ -161,6 +161,7 @@ void CPipeServer::InitMono()
 
 			mono_class_get = (MONO_CLASS_GET)GetProcAddress(hMono, "mono_class_get");
 			mono_class_from_name_case = (MONO_CLASS_FROM_NAME_CASE)GetProcAddress(hMono, "mono_class_from_name_case");
+			mono_class_from_name = (MONO_CLASS_FROM_NAME_CASE)GetProcAddress(hMono, "mono_class_from_name");
 			mono_class_get_name = (MONO_CLASS_GET_NAME)GetProcAddress(hMono, "mono_class_get_name");
 			mono_class_get_namespace = (MONO_CLASS_GET_NAMESPACE)GetProcAddress(hMono, "mono_class_get_namespace");
 			mono_class_get_methods = (MONO_CLASS_GET_METHODS)GetProcAddress(hMono, "mono_class_get_methods");
@@ -194,6 +195,7 @@ void CPipeServer::InitMono()
 
 
 			mono_signature_get_desc = (MONO_SIGNATURE_GET_DESC)GetProcAddress(hMono, "mono_signature_get_desc");
+			mono_signature_get_params = (MONO_SIGNATURE_GET_PARAMS)GetProcAddress(hMono, "mono_signature_get_params");
 			mono_signature_get_param_count = (MONO_SIGNATURE_GET_PARAM_COUNT)GetProcAddress(hMono, "mono_signature_get_param_count");
 			mono_signature_get_return_type = (MONO_SIGNATURE_GET_RETURN_TYPE)GetProcAddress(hMono, "mono_signature_get_return_type");
 
@@ -205,6 +207,7 @@ void CPipeServer::InitMono()
 			mono_jit_info_get_method = (MONO_JIT_INFO_GET_METHOD)GetProcAddress(hMono, "mono_jit_info_get_method");
 			mono_jit_info_get_code_start = (MONO_JIT_INFO_GET_CODE_START)GetProcAddress(hMono, "mono_jit_info_get_code_start");
 			mono_jit_info_get_code_size = (MONO_JIT_INFO_GET_CODE_SIZE)GetProcAddress(hMono, "mono_jit_info_get_code_size");
+			mono_jit_exec = (MONO_JIT_EXEC)GetProcAddress(hMono, "mono_jit_exec");
 
 			mono_method_header_get_code = (MONO_METHOD_HEADER_GET_CODE)GetProcAddress(hMono, "mono_method_header_get_code");
 			mono_disasm_code = (MONO_DISASM_CODE)GetProcAddress(hMono, "mono_disasm_code");
@@ -220,10 +223,14 @@ void CPipeServer::InitMono()
 			mono_array_new = (MONO_ARRAY_NEW)GetProcAddress(hMono, "mono_array_new");
 			mono_value_box = (MONO_VALUE_BOX)GetProcAddress(hMono, "mono_value_box");
 			mono_object_unbox = (MONO_OBJECT_UNBOX)GetProcAddress(hMono, "mono_object_unbox");
+			mono_object_new = (MONO_OBJECT_NEW)GetProcAddress(hMono, "mono_object_new");
+			
 			mono_class_get_type = (MONO_CLASS_GET_TYPE)GetProcAddress(hMono, "mono_class_get_type");
 
 			mono_method_desc_search_in_image = (MONO_METHOD_DESC_SEARCH_IN_IMAGE)GetProcAddress(hMono, "mono_method_desc_search_in_image");
 			mono_runtime_invoke = (MONO_RUNTIME_INVOKE)GetProcAddress(hMono, "mono_runtime_invoke");
+			mono_runtime_object_init = (MONO_RUNTIME_OBJECT_INIT)GetProcAddress(hMono, "mono_runtime_object_init");
+
 
 			mono_assembly_name_new = (MONO_ASSEMBLY_NAME_NEW)GetProcAddress(hMono, "mono_assembly_name_new");
 			mono_assembly_loaded = (MONO_ASSEMBLY_LOADED)GetProcAddress(hMono, "mono_assembly_loaded");
@@ -250,7 +257,31 @@ void CPipeServer::InitMono()
 	}
 }
 
+void CPipeServer::Object_New()
+{
+	void *domain = (void *)mono_get_root_domain();
+	void *klass = (void *)ReadQword();
+	void *object=mono_object_new(domain, klass);
+	WriteQword((UINT64)object);
+}
 
+void CPipeServer::Object_Init()
+{
+	void *object = (void *)ReadQword();
+	try
+	{
+		mono_runtime_object_init(object);
+		WriteByte(1);
+	}
+	catch (char *e)
+	{
+		WriteByte(0);
+		OutputDebugStringA("Error initializing object:\n");
+		OutputDebugStringA(e);
+	}
+	
+
+}
 
 void CPipeServer::Object_GetClass()
 {
@@ -372,19 +403,31 @@ void CPipeServer::EnumClassesInImage()
 	for (i = 0; i < tdefcount; i++)
 	{
 		void *c = mono_class_get(image, MONO_TOKEN_TYPE_DEF | i + 1);
-		char *name = mono_class_get_name(c);
+		if (c != NULL)
+		{
+			char *name = mono_class_get_name(c);
 
-		WriteQword((UINT_PTR)c);
+			WriteQword((UINT_PTR)c);
 
-		WriteWord(strlen(name));
-		Write(name, strlen(name));
+			if (c)
+			{
+				WriteWord(strlen(name));
+				Write(name, strlen(name));
+			}
+			else
+				WriteWord(0);
 
-		name = mono_class_get_namespace(c);
-		WriteWord(strlen(name));
-		Write(name, strlen(name));
-
-
-
+			name = mono_class_get_namespace(c);
+			if (name)
+			{
+				WriteWord(strlen(name));
+				Write(name, strlen(name));
+			}
+			else
+				WriteWord(0);			
+		}
+		else
+			WriteQword(0);
 	}
 }
 
@@ -603,6 +646,58 @@ void CPipeServer::DisassembleMethod()
 	g_free(disassembly);
 }
 
+void CPipeServer::GetMethodParameters()
+{
+	void *method = (void *)ReadQword();
+	void *methodsignature = mono_method_signature(method);
+	int i;
+
+	if (methodsignature)
+	{
+		int paramcount=mono_signature_get_param_count(methodsignature);
+		char **names = (char **)calloc(sizeof(char *), paramcount);
+		mono_method_get_param_names(method, (const char **)names);
+		WriteByte(paramcount);
+		for (i = 0; i < paramcount; i++)
+		{
+			if (names[i])
+			{
+				WriteByte(strlen(names[i]));
+				Write(names[i], strlen(names[i]));
+			}
+			else
+				WriteByte(0);
+		}
+
+		if (paramcount)		
+		{
+			gpointer iter = NULL;
+			MonoType *paramtype=mono_signature_get_params((MonoMethodSignature*)methodsignature, &iter);
+
+			if (paramtype)
+				WriteDword(mono_type_get_type(paramtype));
+			else
+				WriteDword(0);
+		}
+
+		{
+			MonoType *returntype = mono_signature_get_return_type(methodsignature);
+			if (returntype)
+				WriteDword(mono_type_get_type(returntype));
+			else
+				WriteDword(0);
+		}
+
+		
+
+
+
+		
+	}
+	else
+		WriteByte(0);
+}
+
 void CPipeServer::GetMethodSignature()
 {
 	void *method = (void *)ReadQword();
@@ -657,6 +752,19 @@ void CPipeServer::GetParentClass(void)
 	UINT_PTR parent = (UINT_PTR)mono_class_get_parent(klass);
 
 	WriteQword(parent);
+}
+
+void CPipeServer::GetVTableFromClass(void)
+{
+	void *domain = (void *)ReadQword();
+	if (domain == NULL)
+		domain = (void *)mono_get_root_domain();
+
+	void *klass = (void *)ReadQword();
+	void *vtable = (domain && klass) ? mono_class_vtable(domain, klass) : NULL;
+	
+	WriteQword((UINT_PTR)vtable);
+
 }
 
 void CPipeServer::GetStaticFieldAddressFromClass(void)
@@ -944,6 +1052,9 @@ void CPipeServer::LoadAssemblyFromFile(void)
 	
 	void *assembly = mono_assembly_open(imageName, &status);
 	WriteQword((UINT_PTR)assembly);
+
+	if (mono_jit_exec)
+		mono_jit_exec(domain, assembly, 0, NULL);	
 }
 
 void CPipeServer::GetFullTypeName(void)
@@ -1000,6 +1111,14 @@ void CPipeServer::Start(void)
 
 				case MONOCMD_OBJECT_GETCLASS:
 					Object_GetClass();
+					break;
+
+				case MONOCMD_OBJECT_NEW:
+					Object_New();
+					break;
+
+				case MONOCMD_OBJECT_INIT:
+					Object_Init();
 					break;
 
 				case MONOCMD_ENUMDOMAINS:
@@ -1089,12 +1208,20 @@ void CPipeServer::Start(void)
 					DisassembleMethod();
 					break;
 
+				case MONOCMD_GETMETHODPARAMETERS:
+					GetMethodParameters();
+					break;
+
 				case MONOCMD_GETMETHODSIGNATURE:
 					GetMethodSignature();
 					break;
 
 				case MONOCMD_GETPARENTCLASS:
 					GetParentClass();
+					break;
+
+				case MONOCMD_GETVTABLEFROMCLASS:
+					GetVTableFromClass();
 					break;
 
 				case MONOCMD_GETSTATICFIELDADDRESSFROMCLASS:

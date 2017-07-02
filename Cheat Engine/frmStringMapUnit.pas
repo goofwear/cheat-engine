@@ -69,6 +69,7 @@ type
     procedure cbRegExpChange(Sender: TObject);
     procedure FindDialog1Find(Sender: TObject);
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
+    procedure FormDestroy(Sender: TObject);
     procedure FormResize(Sender: TObject);
     procedure ListView1DblClick(Sender: TObject);
     procedure miFindClick(Sender: TObject);
@@ -149,7 +150,6 @@ begin
   e.address:=address;
   e.stringsize:=size;
   e.unicode:=unicode;
-
 
   n:=stringtree.Add(e);
   prev:=stringtree.FindPrecessor(n);
@@ -383,7 +383,9 @@ var n:  TAvgLvlTreeNode;
 begin
   isfillinglist:=false;
 
+  listview1.BeginUpdate;
   listview1.Clear;
+  listview1.EndUpdate;
 
   if scanner<>nil then
   begin
@@ -575,6 +577,11 @@ end;
 procedure TfrmStringMap.FormClose(Sender: TObject; var CloseAction: TCloseAction);
 begin
   isfillinglist:=false;
+end;
+
+procedure TfrmStringMap.FormDestroy(Sender: TObject);
+begin
+  cleanup;
 end;
 
 procedure TfrmStringMap.FormResize(Sender: TObject);

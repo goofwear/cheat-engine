@@ -15,7 +15,7 @@ uses windows, forms, LCLIntf,registry, SysUtils,AdvancedOptionsUnit,CommentsUnit
      zstream, luafile, disassemblerComments, commonTypeDefs;
 
 
-var CurrentTableVersion: dword=24;
+var CurrentTableVersion: dword=26;
 procedure protecttrainer(filename: string);
 procedure unprotecttrainer(filename: string; stream: TStream);
 procedure SaveTable(Filename: string; protect: boolean=false);
@@ -183,7 +183,8 @@ resourcestring
 implementation
 
 uses MainUnit, mainunit2, symbolhandler, LuaHandler, formsettingsunit,
-     frmExeTrainerGeneratorUnit, trainergenerator, ProcessHandlerUnit, parsers;
+     frmExeTrainerGeneratorUnit, trainergenerator, ProcessHandlerUnit, parsers,
+     feces, askToRunLuaScript;
 
 
 
@@ -209,74 +210,59 @@ resourcestring
   rsOSThereIsANewerVersionifCheatEngineOutEtc = 'There is a newer version of Cheat Engine out. It''s recommended to use that version instead';
   rsOSThisCheatTableIsCorrupt = 'This cheat table is corrupt';
 
- {
-procedure LoadStructFromXMLNode(var struct: TbaseStructure; Structure: TDOMNode);
-var tempnode: TDOMNode;
-    elements: TDOMNode;
-    element: TDOMNode;
-    i: integer;
-    currentOffset: dword;
-    findoffset: boolean;
-begin
 
-  currentoffset:=0;
-
-  if structure.NodeName='Structure' then
-  begin
-    tempnode:=structure.FindNode('Name');
-    if tempnode<>nil then
-      struct.name:=tempnode.TextContent;
-
-    elements:=structure.FindNode('Elements');
-    setlength(struct.structelement, elements.ChildNodes.Count);
-
-
-
-    for i:=0 to length(struct.structelement)-1 do
-    begin
-      element:=elements.ChildNodes[i];
-      findoffset:=true;
-      tempnode:=element.FindNode('Offset');
-      if tempnode<>nil then
-      begin
-        try
-          struct.structelement[i].offset:=strtoint(tempnode.textcontent);
-          findoffset:=false; //the offset was fetched properly, no need to calculate it
-        except
-
-        end;
-      end;
-
-      if findoffset then //it couldn't be read out
-        struct.structelement[i].offset:=currentoffset;  //calculated offset
-
-      tempnode:=element.FindNode('Description');
-      if tempnode<>nil then
-        struct.structelement[i].description:=tempnode.TextContent;
-
-      tempnode:=element.FindNode('PointerTo');
-      struct.structelement[i].pointerto:=(tempnode<>nil) and (tempnode.TextContent='1');
-
-      tempnode:=element.FindNode('PointerToSize');
-      if tempnode<>nil then
-        struct.structelement[i].pointertosize:=strtoint(tempnode.TextContent);
-
-      tempnode:=element.FindNode('Structurenr');
-      if tempnode<>nil then
-        struct.structelement[i].structurenr:=strtoint(tempnode.TextContent);
-
-      tempnode:=element.FindNode('Bytesize');
-      if tempnode<>nil then
-        struct.structelement[i].Bytesize:=strtoint(tempnode.TextContent);
-
-
-      currentoffset:=struct.structelement[i].offset+struct.structelement[i].Bytesize;
-    end;
+type
+  THintWindowX=class(THintWindow)
+  private
+    i:TImage;
+  protected
+    procedure DoCreate; override;
+    procedure DoDestroy; override;
   end;
 
-  sortStructure(struct);
+  THintWindowXClass = class of THintWindowX;
+
+  TImageHint=class
+  public
+    procedure signatureShowHint(Sender: TObject; HintInfo: PHintInfo);
+  end;
+
+var sigimage: TPicture;
+
+procedure THintWindowX.DoDestroy;
+begin
+  if i<>nil then
+    freeandnil(i);
 end;
-        }
+
+procedure THintWindowX.DoCreate;
+begin
+  inherited docreate;
+  i:=TImage.Create(self);
+  i.Picture.Assign(sigimage);
+  i.AutoSize:=true;
+  i.top:=0;
+  i.left:=0;
+  i.parent:=self;
+
+  autosize:=true;
+end;
+
+procedure TImageHint.signatureShowHint(Sender: TObject; HintInfo: PHintInfo);
+var p: tpoint;
+begin
+  hintinfo.HintWindowClass:=THintWindowX;
+  hintinfo.HintColor:=clWhite;
+  p.x:=MainForm.lblSigned.Left+MainForm.lblSigned.width div 2;
+  p.y:=0;
+  p:=MainForm.panel4.ClientToScreen(p);
+
+  p.y:=p.y-sigimage.height;
+  p.x:=p.x-sigimage.Width div 2;
+  hintinfo.HintPos:=p;
+end;
+
+var imagehint: TImageHint;
 
 procedure LoadXML(doc: TXMLDocument; merge: boolean; isTrainer: boolean=false);
 var
@@ -311,9 +297,18 @@ var
     tempstruct: TDissectedStruct;
     svstring: string;
     sv: integer;
+
+    signed: boolean=false;
+    signedstring: string='';
+
+    ask: TfrmLuaScriptQuestion;
+    image: tpicture;
+    imagepos: integer;
 begin
   LUA_DoScript('tableIsLoading=true');
   try
+    signed:=false;
+    image:=nil;
     Forms:=nil;
     Entries:=nil;
     Codes:=nil;
@@ -356,12 +351,12 @@ begin
     //first load the form. If the lua functions are not loaded it's no biggy, the events just don't do anything then
     //and just assume that the loading of the lua script initializes the objects accordingly
 
-
-
-
     CheatTable:=doc.FindNode('CheatTable');
     if CheatTable<>nil then
     begin
+
+      signed:=isProperlySigned(TDOMElement(cheattable), signedstring, imagepos, image);
+
       try
         tempnode:=CheatTable.Attributes.GetNamedItem('CheatEngineTableVersion');
       except
@@ -661,62 +656,33 @@ begin
 
           if Reg.OpenKey('\Software\Cheat Engine',false) then   //fill it from the registry (in case it's loaded before the settings are loaded)
           begin
-            if reg.ValueExists('Ask if table has lua script') then
-              formSettings.cbAskIfTableHasLuascript.checked:=reg.ReadBool('Ask if table has lua script')
+            if reg.ValueExists('LuaScriptAction') then
+              i:=reg.ReadInteger('LuaScriptAction')
             else
-              formSettings.cbAskIfTableHasLuascript.checked:=true;
+              i:=1;
 
-            if reg.ValueExists('Always run script') then
-              formsettings.cbAlwaysRunScript.Checked:=reg.ReadBool('Always run script')
-            else
-              formsettings.cbAlwaysRunScript.Checked:=false;
-
-          end
-          else
-            formSettings.cbAskIfTableHasLuascript.checked:=true; //no registry settings yet.
-
-          if formSettings.cbAskIfTableHasLuascript.checked then
-          begin
-
-            r:=MessageDlg(rsThisTableContainsALuaScriptDoYouWantToRunIt, mtConfirmation, [mbyes, mbno, mbyestoall, mbNoToAll], 0);
-
-            if r in [mrYesToAll, mrNoToAll] then
-            begin
-              case r of
-
-                mrYesToAll:
-                begin
-                  r:=mryes;
-                  formsettings.cbAskIfTableHasLuascript.Checked:=false;
-                  formsettings.cbAlwaysRunScript.checked:=true;
-                end;
-
-                mrNoToAll:
-                begin
-                  r:=mrNo;
-                  formsettings.cbAskIfTableHasLuascript.Checked:=false;
-                  formsettings.cbAlwaysRunScript.checked:=false;
-                end;
-              end;
-
-
-              if Reg.OpenKey('\Software\Cheat Engine',true) then
+            case i of
+              0: r:=mryes;
+              1,2:
               begin
-                reg.WriteBool('Ask if table has lua script',formsettings.cbAskIfTableHasLuascript.Checked);
-                reg.WriteBool('Always run script',formsettings.cbAlwaysRunScript.Checked);
+                if (i=1) and signed then r:=mryes else
+                begin
+                  ask:=TfrmLuaScriptQuestion.Create(application);
+                  ask.script.Lines.Text:=mainform.frmLuaTableScript.assemblescreen.Text;
+                  ask.LuaScriptAction:=i;
+                  r:=ask.showmodal;
+
+                  reg.WriteInteger('LuaScriptAction', ask.LuaScriptAction);
+
+
+                  ask.free;
+                end;
               end;
 
+              3: r:=mrno;
             end;
-
-
-          end
-          else
-          begin
-            if formSettings.cbAlwaysRunScript.checked then
-              r:=mrYes
-            else
-              r:=mrNo;
           end;
+
 
         finally
           reg.free;
@@ -741,8 +707,157 @@ begin
 
     end;
 
+    //default view
+    mainform.lblSigned.Anchors:=[];
+    mainform.lblSigned.AnchorSideTop.control:=mainform.Panel4;
+    mainform.lblSigned.AnchorSideTop.side:=asrCenter;
+    mainform.lblSigned.AnchorSideLeft.control:=mainform.Panel4;
+    mainform.lblSigned.AnchorSideLeft.Side:=asrCenter;
+    mainform.lblSigned.Anchors:=[akTop,akLeft];
+
+    if signed then
+    begin
+      mainform.lblSigned.Caption:=signedstring;
+      mainform.lblSigned.Visible:=true;
+
+      if image<>nil then
+      begin
+        if MainForm.imgSignature=nil then
+          MainForm.imgSignature:=TImage.create(mainform);
+
+        MainForm.imgSignature.Name:='imgSignature';
+        MainForm.imgSignature.AutoSize:=true;
+        MainForm.imgSignature.Anchors:=[];
+
+        MainForm.imgSignature.Parent:=MainForm.panel4;
+
+        case imagepos of
+          1:
+          begin
+            //behind it (centered)
+            MainForm.imgSignature.AnchorSideTop.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideTop.Side:=asrCenter;
+            MainForm.imgSignature.AnchorSideLeft.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideLeft.Side:=asrCenter;
+            MainForm.imgSignature.Anchors:=[akTop, akLeft];
+          end;
+
+          2:
+          begin
+            //above it
+            MainForm.imgSignature.AnchorSideTop.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideTop.Side:=asrTop;
+            MainForm.imgSignature.AnchorSideLeft.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideLeft.Side:=asrCenter;
+            MainForm.imgSignature.Anchors:=[akTop, akLeft];
+
+            mainform.lblSigned.Anchors:=[];
+            mainform.lblSigned.AnchorSideTop.control:=MainForm.imgSignature;
+            mainform.lblSigned.AnchorSideTop.side:=asrBottom;
+            mainform.lblSigned.Anchors:=[akTop,akLeft];
+          end;
+
+          3:
+          begin
+            //below it
+
+            mainform.lblSigned.Anchors:=[];
+            mainform.lblSigned.AnchorSideTop.control:=MainForm.panel4;
+            mainform.lblSigned.AnchorSideTop.side:=asrTop;
+            mainform.lblSigned.Anchors:=[akTop,akLeft];
+
+            MainForm.imgSignature.AnchorSideTop.Control:=mainform.lblSigned;
+            MainForm.imgSignature.AnchorSideTop.Side:=asrBottom;
+            MainForm.imgSignature.AnchorSideLeft.Control:=mainform.lblSigned;
+            MainForm.imgSignature.AnchorSideLeft.Side:=asrCenter;
+            MainForm.imgSignature.Anchors:=[akTop, akLeft];
+          end;
+
+          4:
+          begin
+            //left of the label
+            MainForm.imgSignature.AnchorSideTop.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideTop.Side:=asrCenter;
+            MainForm.imgSignature.AnchorSideRight.Control:=mainform.lblSigned;
+            MainForm.imgSignature.AnchorSideRight.Side:=asrLeft;
+            MainForm.imgSignature.Anchors:=[akTop, akRight];
+          end;
+
+          5:
+          begin
+            //right of the label
+            MainForm.imgSignature.AnchorSideTop.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideTop.Side:=asrCenter;
+            MainForm.imgSignature.AnchorSideLeft.Control:=mainform.lblSigned;
+            MainForm.imgSignature.AnchorSideLeft.Side:=asrRight;
+            MainForm.imgSignature.Anchors:=[akTop, akLeft];
+          end;
+
+          6:
+          begin
+            //no text, image only (hint shows text)
+            MainForm.imgSignature.AnchorSideTop.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideTop.Side:=asrTop;
+            MainForm.imgSignature.AnchorSideLeft.Control:=mainform.panel4;
+            MainForm.imgSignature.AnchorSideLeft.Side:=asrCenter;
+            MainForm.imgSignature.Anchors:=[akTop, akLeft];
+
+            MainForm.imgSignature.Hint:=signedstring;
+            MainForm.imgSignature.ShowHint:=true;
+
+            mainform.lblSigned.Visible:=false;
+          end;
+
+          7:
+          begin
+            //no image, text only (mouseenter pops up image, mouseleave hides it)
+            MainForm.imgSignature.visible:=false;
+
+            if imagehint=nil then
+              imagehint:=TImageHint.create;
+
+            if sigimage=nil then
+              sigimage:=tpicture.Create;
+
+            sigimage.Assign(image);
+
+
+            mainform.lblSigned.OnShowHint:=imagehint.signatureShowHint;
+            mainform.lblSigned.ShowHint:=true;
+
+
+          end;
+
+        end;
+
+
+        MainForm.imgSignature.Picture.Assign(image);
+
+        freeandnil(image);
+
+        mainform.lblSigned.BringToFront;
+
+      end
+      else
+      begin
+        if MainForm.imgSignature<>nil then
+          freeandnil(MainForm.imgSignature);
+      end;
+    end
+    else
+    begin
+      mainform.lblSigned.Visible:=false;
+      if mainform.imgSignature<>nil then
+        freeandnil(mainform.imgSignature);
+    end;
+
+
+
   finally
     LUA_DoScript('tableIsLoading=false');
+
+    if image<>nil then
+      freeandnil(image);
   end;
 
 end;
@@ -1136,6 +1251,9 @@ begin
     dcomments:=CheatTable.AppendChild(doc.CreateElement('DisassemblerComments'));
     dassemblercomments.saveToXMLNode(dcomments);
   end;
+
+  if cansigntables and formsettings.cbAlwaysSignTable.checked then
+    signTable(cheattable);
 
   WriteXMLFile(doc, filename);
 

@@ -9,8 +9,9 @@ object frmStacktrace: TfrmStacktrace
   ClientWidth = 683
   OnClose = FormClose
   OnCreate = FormCreate
+  PopupMode = pmAuto
   Position = poOwnerFormCenter
-  LCLVersion = '1.0.8.0'
+  LCLVersion = '1.6.0.4'
   object ListView1: TListView
     Left = 0
     Height = 274

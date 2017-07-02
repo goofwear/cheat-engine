@@ -97,6 +97,7 @@ type
     procedure FilterResetCount(ri: TRegionInfo);
     procedure FilterResetAll(ri: TRegionInfo);
   public
+    invalidated: integer;
     filteroption: TfilterOption;
     callcount: integer;
     rangestart, rangestop: qword;
@@ -148,18 +149,24 @@ type
     btnRecordPause: TButton;
     btnResetCount: TButton;
     btnCancelFilter: TButton;
-    Button5: TButton;
+    btnShowResults: TButton;
     btnReset: TButton;
     cbFilterFuturePaths: TCheckBox;
     cbfilterOutNewEntries: TCheckBox;
     cbDontDeleteTraceFiles: TCheckBox;
     cbParseToTextfile: TCheckBox;
+    cbAutoProcess: TCheckBox;
+    cbPauseTargetWhileProcessing: TCheckBox;
     deTargetFolder: TDirectoryEdit;
     deTextOut: TDirectoryEdit;
+    edtFlushInterval: TEdit;
+    edtMaxFilesize: TEdit;
     edtBufSize: TEdit;
     edtCallCount: TEdit;
     gbRange: TGroupBox;
     Label1: TLabel;
+    Label2: TLabel;
+    Label4: TLabel;
     lblBuffersPerCPU: TLabel;
     lblIPCount: TLabel;
     lblKB: TLabel;
@@ -178,9 +185,12 @@ type
     Panel3: TPanel;
     Panel5: TPanel;
     PopupMenu1: TPopupMenu;
+    cbWhenFilesizeAbove: TCheckBox;
+    cbTraceInterval: TCheckBox;
     rbLogToFolder: TRadioButton;
     rbRuntimeParsing: TRadioButton;
     tActivator: TTimer;
+    tProcessor: TTimer;
     procedure btnAddRangeClick(Sender: TObject);
     procedure btnExecutedClick(Sender: TObject);
     procedure btnFilterCallCountClick(Sender: TObject);
@@ -192,9 +202,13 @@ type
     procedure btnResetCountClick(Sender: TObject);
     procedure Button1Click(Sender: TObject);
     procedure Button2Click(Sender: TObject);
-    procedure Button5Click(Sender: TObject);
+    procedure btnShowResultsClick(Sender: TObject);
     procedure cbfilterOutNewEntriesChange(Sender: TObject);
     procedure cbParseToTextfileChange(Sender: TObject);
+    procedure cbTraceIntervalChange(Sender: TObject);
+    procedure cbWhenFilesizeAboveChange(Sender: TObject);
+    procedure edtFlushIntervalChange(Sender: TObject);
+    procedure edtMaxFilesizeChange(Sender: TObject);
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure FormCloseQuery(Sender: TObject; var CanClose: boolean);
     procedure FormCreate(Sender: TObject);
@@ -211,8 +225,11 @@ type
     procedure rbLogToFolderChange(Sender: TObject);
     procedure tActivatorTimer(Sender: TObject);
     procedure tbRecordPauseChange(Sender: TObject);
+    procedure tProcessorTimer(Sender: TObject);
   private
     { private declarations }
+    debugmode: boolean; //when set the kernelmode part is disabled, but processing of files sitll happens
+
     l: tstringlist;
     ultimap2Initialized: dword;
 
@@ -234,6 +251,10 @@ type
 
     maxrangecount: integer;
 
+    ticks: integer;
+    FlushInterval: integer;
+    maxfilesize: integer;
+
     function RegionCompare(Tree: TAvgLvlTree; Data1, Data2: pointer): integer;
 
     function  ValidListCompare(Tree: TAvgLvlTree; Data1, Data2: Pointer): integer;
@@ -247,7 +268,6 @@ type
     procedure FilterGUI(state: boolean; showCancel: boolean=true);
     procedure Filter(filterOption: TFilterOption);
     procedure FlushResults(f: TFilterOption=foNone);
-    procedure ExecuteFilter(Sender: TObject);
 
     procedure setState(state: TRecordState);
     function ModuleSelectEvent(index: integer; listText: string): string;
@@ -266,7 +286,7 @@ implementation
 
 {$R *.lfm}
 
-uses symbolhandler, frmSelectionlistunit, cpuidUnit, MemoryBrowserFormUnit;
+uses symbolhandler, frmSelectionlistunit, cpuidUnit, MemoryBrowserFormUnit, AdvancedOptionsUnit;
 
 resourcestring
 rsRecording2 = 'Recording';
@@ -715,6 +735,8 @@ var
   tf: TFileStream;
   ts: TStringList;
 begin
+  OutputDebugString(format('%d: Ultimap2Worker launcher',[id]));
+
   callbackImage:=pt_image_alloc('xxx');
   pt_image_set_callback(callbackImage,@iptReadMemory,self);
 
@@ -742,92 +764,104 @@ begin
 
     if waitForData(250, e) then
     begin
+      OutputDebugString(format('%d: Ultimap2Worker data available. Size=%d',[id, e.size]));
       try
-        //process the data between e.Address and e.Address+e.Size
-        totalsize:=e.Size;
-        iptConfig.beginaddress:=pointer(e.Address);
-        iptConfig.endaddress:=pointer(e.Address+e.Size);
+        try
+          //process the data between e.Address and e.Address+e.Size
+          totalsize:=e.Size;
+          iptConfig.beginaddress:=pointer(e.Address);
+          iptConfig.endaddress:=pointer(e.Address+e.Size);
 
-        decoder:=pt_insn_alloc_decoder(@iptConfig);
-        if decoder<>nil then
-        begin
-          try
-            pt_insn_set_image(decoder, callbackImage);
+          decoder:=pt_insn_alloc_decoder(@iptConfig);
+          if decoder<>nil then
+          begin
+            try
+              pt_insn_set_image(decoder, callbackImage);
 
-            if parseAsText then //create the textfile
-            begin
-              try
-                if FileExists(textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt') then
-                  tf:=TFileStream.Create(textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt', fmOpenReadWrite or fmShareDenyNone)
-                else
-                  tf:=TFileStream.Create(textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt', fmCreate or fmShareDenyNone)
-              except
-                OutputDebugString('failed creating or opening '+textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt');
-                tf:=nil
-              end
-            end;
-
-            //scan through this decoder
-
-            i:=0;
-            while (pt_insn_sync_forward(decoder)>=0) and (not terminated) do
-            begin
-              while (pt_insn_next(decoder, @insn, sizeof(insn))>=0) and (not terminated) do
+              if parseAsText then //create the textfile
               begin
-                if parseAsText then
-                  parseToStringlist(insn, ts);
+                try
+                  if FileExists(textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt') then
+                    tf:=TFileStream.Create(textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt', fmOpenReadWrite or fmShareDenyNone)
+                  else
+                    tf:=TFileStream.Create(textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt', fmCreate or fmShareDenyNone)
+                except
+                  OutputDebugString('failed creating or opening '+textFolder+'cpu'+inttostr(e.Cpunr)+'trace.txt');
+                  tf:=nil
+                end
+              end;
 
-                if insn.iclass=ptic_error then break;
+              //scan through this decoder
 
-
-                handleIP(insn.ip, insn.iclass);
-
-                inc(i);
-                if i>512 then
+              i:=0;
+              while (pt_insn_sync_forward(decoder)>=0) and (not terminated) do
+              begin
+                while (pt_insn_next(decoder, @insn, sizeof(insn))>=0) and (not terminated) do
                 begin
-                  pt_insn_get_offset(decoder, @processed);
+                  if parseAsText then
+                    parseToStringlist(insn, ts);
 
-                  i:=0;
+                  if insn.iclass=ptic_error then break;
 
 
-                  if parseAsText and (tf<>nil) then //flush to the file
+                  handleIP(insn.ip, insn.iclass);
+
+                  inc(i);
+                  if i>512 then
                   begin
-                    ts.SaveToStream(tf);
-                    ts.clear;
+                    pt_insn_get_offset(decoder, @processed);
+
+                    i:=0;
+
+
+                    if parseAsText and (tf<>nil) then //flush to the file
+                    begin
+                      ts.SaveToStream(tf);
+                      ts.clear;
+                    end;
                   end;
+
+
                 end;
 
-
+                if parseAsText then
+                begin
+                  ts.add('');
+                  ts.add('-----New block-----');
+                  ts.add('');
+                end;
               end;
+            finally
+              pt_insn_free_decoder(decoder);
 
-              if parseAsText then
+              if parseAsText and (tf<>nil) then
               begin
-                ts.add('');
-                ts.add('-----New block-----');
-                ts.add('');
-              end;
-            end;
-          finally
-            pt_insn_free_decoder(decoder);
+                if ts.Count>0 then //flush
+                begin
+                  ts.SaveToStream(tf);
+                  ts.clear;
+                end;
 
-            if parseAsText and (tf<>nil) then
-            begin
-              if ts.Count>0 then //flush
-              begin
-                ts.SaveToStream(tf);
-                ts.clear;
+                freeandnil(tf); //close
               end;
-
-              freeandnil(tf); //close
             end;
           end;
+
+        finally
+          processed:=totalsize;
+          done:=true;
+          continueFromData(e);
         end;
 
-      finally
-        processed:=totalsize;
-        done:=true;
-        continueFromData(e);
+        OutputDebugString(format('%d: Ultimap2Worker data processed successfully', [id]));
+      except
+        on e:exception do
+        begin
+          OutputDebugString(format('%d: Ultimap2Worker exception during processing data : %s',[id, e.Message]));
+        end;
       end;
+
+      OutputDebugString(format('%d: Ultimap2Worker waiting for new data', [id]));
     end else sleep(1);
   end;
 
@@ -871,7 +905,10 @@ begin
     if (w[i]>0) and ((w[i] and 1)=0) then //has info and not yet invalidated
     begin
       if (bi[i].flags and bifExecuted)<>0 then //filter it out
+      begin
         w[i]:=1; //invalidate
+        inc(invalidated);
+      end;
     end;
   end;
 end;
@@ -889,7 +926,10 @@ begin
     if (w[i]>0) and ((w[i] and 1)=0) then //has info and not yet invalidated
     begin
       if (bi[i].flags and bifExecuted)=0 then //filter it out
-        w[i]:=1 //invalidate
+      begin
+        w[i]:=1; //invalidate
+        inc(invalidated);
+      end
       else //mark as not executed for next filter op
         bi[i].flags:=bi[i].flags xor bifExecuted;
 
@@ -910,7 +950,10 @@ begin
     if (w[i]>0) and ((w[i] and 1)=0) then //has info and not yet invalidated
     begin
       if (bi[i].flags and bifIsCall)=0 then //filter it out
-        w[i]:=1 //invalidate
+      begin
+        w[i]:=1; //invalidate
+        inc(invalidated);
+      end
       else //mark as not executed for next filter op
         bi[i].flags:=bi[i].flags and (not bifExecuted);
     end;
@@ -930,7 +973,10 @@ begin
     if (w[i]>0) and ((w[i] and 1)=0) then //has info and not yet invalidated
     begin
       if bi[i].count <> callcount then //filter it out
-        w[i]:=1 //invalidate
+      begin
+        w[i]:=1; //invalidate
+        inc(invalidated);
+      end
       else //mark as not executed for next filter op
         bi[i].flags:=bi[i].flags and (not bifExecuted);
     end;
@@ -987,6 +1033,7 @@ var
   i: integer;
   filterRoutine: procedure(ri: TRegionInfo) of object;
 begin
+  OutputDebugString(format('%d: FilterWorker alive',[GetCurrentThreadId]));
   done:=true;
 
   case filteroption of
@@ -1007,6 +1054,8 @@ begin
     begin
       if terminated then exit;
 
+      OutputDebugString(format('%d: FilterWorker woke up',[GetCurrentThreadId]));
+
       queueCS.Enter;
       dec(queuepos^);
       if queuepos^<0 then //should never happen as the only time it can happen is after the thread has been set to terminated
@@ -1023,6 +1072,8 @@ begin
       filterRoutine(ri);
 
       done:=true;
+
+      OutputDebugString(format('%d: FilterWorker returned properly. back to sleep',[GetCurrentThreadId]));
     end;
   end;
 end;
@@ -1052,7 +1103,7 @@ var
 begin
   freeOnTerminate:=true;
 
-
+  OutputDebugString('Filter thread alive. Spawning workers');
   count:=cpucount;
   queueCS:=TCriticalSection.Create;
   getmem(workqueue, sizeof(PRegionInfo)*count);
@@ -1140,7 +1191,10 @@ begin
         sleep(50);
       end;
     end;
+
+    OutputDebugString('Filter thread normal end');
   finally
+    OutputDebugString('Filter thread cleanup');
     for i:=0 to length(workers)-1 do
       workers[i].Terminate;
 
@@ -1158,7 +1212,7 @@ begin
     closehandle(filterSemaphore);
     freeandnil(queueCS);
     freemem(workqueue);
-
+    OutputDebugString('Filter thread cleanup done');
   end;
 
 end;
@@ -1244,7 +1298,6 @@ begin
     cbDontDeleteTraceFiles.enabled:=false;
   end;
 
-
   rbRuntimeParsing.enabled:=state;
 
   lbRange.enabled:=(maxrangecount>0) and state;
@@ -1265,11 +1318,19 @@ end;
 procedure TfrmUltimap2.FlushResults(f: TFilterOption=foNone);
 var i:integer;
 begin
+  OutputDebugString('TfrmUltimap2.FlushResults');
+  ultimap2_resetTraceSize;
   ultimap2_flush;
-
 
   if rbLogToFolder.checked and (state=rsRecording) then
   begin
+    if cbPauseTargetWhileProcessing.checked then
+    begin
+      advancedoptions.Pausebutton.down := True;
+      advancedoptions.Pausebutton.Click;
+    end;
+
+
     //signal the worker threads to process the files first
     for i:=0 to length(workers)-1 do
     begin
@@ -1278,6 +1339,8 @@ begin
       workers[i].processFile.SetEvent;
     end;
 
+
+    btnShowResults.enabled:=false;
     btnRecordPause.enabled:=false;
     tActivator.enabled:=true;
     //when the worker threads are all done, this will become enabled
@@ -1296,19 +1359,23 @@ begin
   end;
 end;
 
-procedure TfrmUltimap2.ExecuteFilter(Sender: TObject);
-begin
-
-end;
 
 procedure TfrmUltimap2.setState(state: TRecordState);
 begin
+  tProcessor.enabled:=false;
+
   fstate:=state;
   case state of
     rsRecording:
     begin
       label1.Caption:=rsRecording2;
       panel1.color:=clRed;
+
+      if rbLogToFolder.checked then
+      begin
+        if cbAutoProcess.checked then
+          tProcessor.enabled:=true;
+      end;
     end;
 
     rsStopped:
@@ -1386,7 +1453,8 @@ var
 begin
   if state=rsProcessing then exit;
 
-
+    //if ssCtrl in GetKeyShiftState then
+    //  debugmode:=true;
 
     if ((ultimap2Initialized=0) or (processid<>ultimap2Initialized)) then
     begin
@@ -1401,49 +1469,53 @@ begin
       Eric (db)
       }
 
-      r:=CPUID(0);
-      if (r.ebx<>1970169159) or (r.ecx<>1818588270) or (r.edx<>1231384169) then
-        raise exception.create(rsOnlyForIntelCPUs);
-
-      if (CPUID(7,0).ebx shr 25) and 1=0 then
-        raise exception.create(rsSorryButYourCPUSeemsToBeLeackingIPTFeature);
-
-      cpuid14_0:=CPUID($14,0);
-      if ((cpuid14_0.ecx shr 1) and 1)=0 then
-        raise exception.create(rsSorryButYourCPUsImplementationOfTheIPTFeatureIsTooOld);
-
-      if (cpuid14_0.ebx and 1)=0 then
-        raise exception.create(rsSorryButYourCPUDoesntSeemToBeAbleToSetATargetProcess);
-
-
-
-      if processid=0 then
-        raise exception.create(rsFirstOpenAProcess);
-
-      if processid=GetCurrentProcessId then
-        raise exception.create(rsTargetADifferentProcess);
-
-      //initial checks are OK
-      bsize:=strtoint(edtBufSize.text)*1024;
-      if bsize<12*1024 then
-        raise exception.create(rsTheSizeHasToBe12KbOrHigher);
-
-      setlength(ranges,lbrange.count);
-      for i:=0 to lbRange.Count-1 do
+      if not debugmode then
       begin
-        s:=lbRange.Items[i];
 
-        if length(s)>=2 then
+        r:=CPUID(0);
+        if (r.ebx<>1970169159) or (r.ecx<>1818588270) or (r.edx<>1231384169) then
+          raise exception.create(rsOnlyForIntelCPUs);
+
+        if (CPUID(7,0).ebx shr 25) and 1=0 then
+          raise exception.create(rsSorryButYourCPUSeemsToBeLeackingIPTFeature);
+
+        cpuid14_0:=CPUID($14,0);
+        //if ((cpuid14_0.ecx shr 1) and 1)=0 then
+        //  raise exception.create(rsSorryButYourCPUsImplementationOfTheIPTFeatureIsTooOld);
+
+        if (cpuid14_0.ebx and 1)=0 then
+          raise exception.create(rsSorryButYourCPUDoesntSeemToBeAbleToSetATargetProcess);
+
+
+
+        if processid=0 then
+          raise exception.create(rsFirstOpenAProcess);
+
+        if processid=GetCurrentProcessId then
+          raise exception.create(rsTargetADifferentProcess);
+
+        //initial checks are OK
+        bsize:=strtoint(edtBufSize.text)*1024;
+        if bsize<12*1024 then
+          raise exception.create(rsTheSizeHasToBe12KbOrHigher);
+
+        setlength(ranges,lbrange.count);
+        for i:=0 to lbRange.Count-1 do
         begin
-          if (s[1]='*') and (s[length(s)]='*') then
-          begin
-            s:=copy(s,2,length(s)-2);
-            ranges[i].isStopRange:=1;
-          end;
-        end;
+          s:=lbRange.Items[i];
 
-        if symhandler.ParseRange(s, ranges[i].startAddress, ranges[i].endaddress)=false then
-          raise exception.create(rsForSomeWeirdReason+lbRange.Items[i]+rsCantBeParsed);
+          if length(s)>=2 then
+          begin
+            if (s[1]='*') and (s[length(s)]='*') then
+            begin
+              s:=copy(s,2,length(s)-2);
+              ranges[i].isStopRange:=1;
+            end;
+          end;
+
+          if symhandler.ParseRange(s, ranges[i].startAddress, ranges[i].endaddress)=false then
+            raise exception.create(rsForSomeWeirdReason+lbRange.Items[i]+rsCantBeParsed);
+        end;
       end;
 
       if rbLogToFolder.Checked then
@@ -1453,7 +1525,20 @@ begin
           if ForceDirectoriesUTF8(deTargetFolder.Directory)=false then
             raise exception.create(deTargetFolder.Directory+rsDoesntExistAndCantBeCreated);
         end;
+
+        if cbAutoProcess.Checked then
+        begin
+          if cbTraceInterval.checked then
+            flushinterval:=strtoint(edtFlushInterval.Text);
+
+          if cbWhenFilesizeAbove.checked then
+            maxfilesize:=strtoint(edtMaxFilesize.Text)*4096*4096;
+        end;
+
       end;
+
+
+
 
       //still here so everything seems alright.
       //turn off the config GUI
@@ -1545,10 +1630,13 @@ begin
       if not libIptInit then raise exception.create(rsFailureLoadingLibipt);
       DBK32Initialize;
 
-      if rbLogToFolder.Checked then
-        ultimap2(processid, bsize, deTargetFolder.Directory, ranges)
-      else
-        ultimap2(processid, bsize, '', ranges);
+      if not debugmode then
+      begin
+        if rbLogToFolder.Checked then
+          ultimap2(processid, bsize, deTargetFolder.Directory, ranges)
+        else
+          ultimap2(processid, bsize, '', ranges);
+      end;
 
       FilterGUI(true);
 
@@ -1579,6 +1667,29 @@ begin
 
 end;
 
+procedure TfrmUltimap2.tProcessorTimer(Sender: TObject);
+begin
+  //check the state
+  inc(ticks);
+
+  if cbTraceInterval.checked then
+  begin
+    //check if the interval has passed
+    if (FlushInterval>0) and (ticks mod FlushInterval=0) then
+      FlushResults;
+  end;
+
+  if cbWhenFilesizeAbove.checked then
+  begin
+    //check if the filesize has reached the proper size
+    if ultimap2_getTraceSize>MaxFileSize then
+      FlushResults;
+  end;
+ // FlushResults(foNone);
+
+ // ultimap2_getTraceSize
+end;
+
 procedure TfrmUltimap2.FormCloseQuery(Sender: TObject; var CanClose: boolean);
 begin
   canclose:=MessageDlg(rsClosingWillFreeAllCollectedData, mtConfirmation,[mbyes,mbno], 0, mbno)=mryes;
@@ -1600,6 +1711,13 @@ begin
       Reg.WriteString('Ultimap2 Folder', deTargetFolder.Directory);
       Reg.WriteBool('Ultimap2 Keep Trace Files', cbDontDeleteTraceFiles.checked);
       Reg.WriteBool('Ultimap2 Use Disk', rbLogToFolder.Checked);
+      Reg.WriteBool('Ultimap2 Auto Process', cbAutoProcess.Checked);
+      Reg.WriteBool('Ultimap2 Auto Process Every Interval', cbTraceInterval.Checked);
+      Reg.WriteString('Ultimap2 Auto Process Interval', edtFlushInterval.text);
+      Reg.WriteBool('Ultimap2 Auto Process When Filesize Above', cbWhenFilesizeAbove.Checked);
+      Reg.WriteString('Ultimap2 Auto Process Max Filesize', edtMaxFilesize.text);
+      Reg.WriteBool('Ultimap2 Pause while processing', cbPauseTargetWhileProcessing.Checked);
+      Reg.WriteBool('Ultimap2 Don''t delete tracefiles', cbDontDeleteTraceFiles.Checked);
 
       Reg.WriteBool('Ultimap2 Parse Trace As Text', cbParseToTextfile.checked);
       Reg.WriteString('Ultimap2 TextTrace Folder', deTextOut.Directory);
@@ -1627,6 +1745,17 @@ begin
   minwidth:=i+canvas.GetTextWidth(edtBufSize.Text);
   if edtBufSize.ClientWidth<minwidth then
     edtBufSize.ClientWidth:=minwidth;
+
+  minwidth:=i+canvas.GetTextWidth('XXXXX');
+  if edtMaxFilesize.ClientWidth<minwidth then
+    edtMaxFilesize.ClientWidth:=minwidth;
+
+  minwidth:=i+canvas.GetTextWidth('XXXX');
+  if edtFlushInterval.ClientWidth<minwidth then
+    edtFlushInterval.ClientWidth:=minwidth;
+
+
+
 
   if label1.Width+4>panel1.Height then
   begin
@@ -1729,12 +1858,32 @@ begin
           rbRuntimeParsing.checked:=true;
       end;
 
+      if Reg.ValueExists('Ultimap2 Auto Process') then
+        cbAutoProcess.Checked:=Reg.ReadBool('Ultimap2 Use Disk');
+
+      if Reg.ValueExists('Ultimap2 Auto Process Every Interval') then
+        cbTraceInterval.Checked:=Reg.ReadBool('Ultimap2 Auto Process Every Interval');
+
+      if Reg.ValueExists('Ultimap2 Auto Process Interval') then
+        edtFlushInterval.text:=Reg.ReadString('Ultimap2 Auto Process Interval');
+
+      if Reg.ValueExists('Ultimap2 Auto Process When Filesize Above') then
+        cbWhenFilesizeAbove.Checked:=Reg.ReadBool('Ultimap2 Auto Process When Filesize Above');
+
+      if Reg.ValueExists('Ultimap2 Auto Process Max Filesize') then
+        edtMaxFilesize.text:=Reg.ReadString('Ultimap2 Auto Process Max Filesize');
+
+      if Reg.ValueExists('Ultimap2 Pause while processing') then
+        cbPauseTargetWhileProcessing.Checked:=Reg.ReadBool('Ultimap2 Pause while processing');
+
+      if Reg.ValueExists('Ultimap2 Don''t delete tracefiles') then
+        cbDontDeleteTraceFiles.Checked:=Reg.ReadBool('Ultimap2 Don''t delete tracefiles');
+
       if Reg.ValueExists('Ultimap2 Parse Trace As Text') then
         cbParseToTextfile.checked:=reg.ReadBool('Ultimap2 Parse Trace As Text');
 
       if Reg.ValueExists('Ultimap2 TextTrace Folder') then
         deTextOut.Directory:=reg.ReadString('Ultimap2 TextTrace Folder');
-
 
     end;
   finally
@@ -2022,7 +2171,7 @@ begin
   end;
 end;
 
-procedure TfrmUltimap2.Button5Click(Sender: TObject);
+procedure TfrmUltimap2.btnShowResultsClick(Sender: TObject);
 var
   e: TAvgLvlTreeNodeEnumerator;
   entry: PValidEntry;
@@ -2051,7 +2200,7 @@ begin
         begin
           for i:=0 to ri^.size-1 do
           begin
-            if (ri^.info[i].count>0) and ((ri^.info[i].flags or bifInvalidated)<>0) then
+            if (ri^.info[i].count>0) and ((ri^.info[i].flags and bifInvalidated)=0) then
             begin
               getmem(entry, sizeof(TValidEntry));
               entry^.address:=ri^.address+i;
@@ -2085,6 +2234,52 @@ begin
 
   deTextOut.ButtonOnlyWhenFocused:=true;
   deTextOut.ButtonOnlyWhenFocused:=false;
+end;
+
+procedure TfrmUltimap2.cbTraceIntervalChange(Sender: TObject);
+begin
+  if cbTraceInterval.checked then
+  begin
+    edtFlushInterval.enabled:=true;
+    edtFlushIntervalChange(sender);
+  end
+  else
+    edtFlushInterval.Enabled:=false;
+
+end;
+
+procedure TfrmUltimap2.cbWhenFilesizeAboveChange(Sender: TObject);
+begin
+  if cbWhenFilesizeAbove.checked then
+  begin
+    edtMaxFilesize.Enabled:=true;
+    edtMaxFilesizeChange(sender);
+  end
+  else
+    edtMaxFilesize.enabled:=false;
+end;
+
+procedure TfrmUltimap2.edtFlushIntervalChange(Sender: TObject);
+begin
+  try
+    flushinterval:=strtoint(edtFlushInterval.Text);
+    if FlushInterval=0 then
+      FlushInterval:=1;
+
+    edtFlushInterval.Font.Color:=clDefault;
+  except
+    edtFlushInterval.Font.Color:=clRed;
+  end;
+end;
+
+procedure TfrmUltimap2.edtMaxFilesizeChange(Sender: TObject);
+begin
+  try
+    maxfilesize:=strtoint(edtMaxFilesize.Text)*4096*4096;
+    edtMaxFilesize.Font.Color:=clDefault;
+  except
+    edtMaxFilesize.Font.Color:=clRed;
+  end;
 end;
 
 procedure TfrmUltimap2.FormClose(Sender: TObject; var CloseAction: TCloseAction);
@@ -2161,6 +2356,14 @@ begin
     exit;
   end;
 
+  if cbPauseTargetWhileProcessing.checked then
+  begin
+    advancedoptions.Pausebutton.down := false;
+    advancedoptions.Pausebutton.Click;
+  end;
+
+
+  btnShowResults.Enabled:=true;
   btnRecordPause.enabled:=true;
   tActivator.Enabled:=false;
 

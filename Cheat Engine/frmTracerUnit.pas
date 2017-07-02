@@ -57,6 +57,7 @@ type
     ESIlabel: TLabel;
     ESlabel: TLabel;
     ESPlabel: TLabel;
+    FindDialog1: TFindDialog;
     FSlabel: TLabel;
     GSlabel: TLabel;
     lblInstruction: TLabel;
@@ -742,8 +743,10 @@ begin
     check:=true
   else
   begin
-    check:=InputQuery(rsSearch, rsTypeTheLUAConditionYouWantToSearchForExampleEAX0x1, lastsearchstring);
-    lastsearchstring:=lastsearchstring;
+    finddialog1.FindText:=lastsearchstring;
+    check:=finddialog1.Execute;
+//    check:=InputQuery(rsSearch, rsTypeTheLUAConditionYouWantToSearchForExampleEAX0x1, lastsearchstring);
+    lastsearchstring:=finddialog1.FindText;
   end;
 
   searchstring:='return '+lastsearchstring;
@@ -755,28 +758,58 @@ begin
     progressbar1.Max:=lvTracer.items.Count;
     pnlSearch.visible:=true;
 
-    if lvTracer.Selected=nil then
-      i:=0
-    else
-      i:=lvTracer.Selected.AbsoluteIndex+1;
-
-    while (i<lvTracer.items.count) and (not stopsearch) do
+    if frDown in finddialog1.Options then
     begin
-      c:=@TTraceDebugInfo(lvTracer.Items[i].data).c;
-      if c<>nil then
+      if lvTracer.Selected=nil then
+        i:=0
+      else
+        i:=lvTracer.Selected.AbsoluteIndex+1;
+
+      while (i<lvTracer.items.count) and (not stopsearch) do
       begin
-        if CheckIfConditionIsMetContext(c, searchstring) then
+        c:=@TTraceDebugInfo(lvTracer.Items[i].data).c;
+        if c<>nil then
         begin
-          lvTracer.Items[i].Selected:=true;
-          lvTracer.MakeSelectionVisible;
-          lvTracerClick(lvTracer);
-          break;
+          if CheckIfConditionIsMetContext(c, searchstring) then
+          begin
+            lvTracer.Items[i].Selected:=true;
+            lvTracer.MakeSelectionVisible;
+            lvTracerClick(lvTracer);
+            break;
+          end;
+
+
+          inc(i);
+          if (i mod 50)=0 then application.ProcessMessages;
+
         end;
+      end;
+    end
+    else
+    begin
+      if lvTracer.Selected=nil then
+        i:=lvtracer.items.count-1
+      else
+        i:=lvTracer.Selected.AbsoluteIndex-1;
+
+      while (i>=0) and (not stopsearch) do
+      begin
+        c:=@TTraceDebugInfo(lvTracer.Items[i].data).c;
+        if c<>nil then
+        begin
+          if CheckIfConditionIsMetContext(c, searchstring) then
+          begin
+            lvTracer.Items[i].Selected:=true;
+            lvTracer.MakeSelectionVisible;
+            lvTracerClick(lvTracer);
+            break;
+          end;
 
 
-        inc(i);
-        if (i mod 50)=0 then application.ProcessMessages;
+          dec(i);
+          if (i mod 50)=0 then application.ProcessMessages;
 
+        end;
       end;
     end;
 
@@ -826,7 +859,7 @@ if the process is 64-bit create r8-r15 and move all objects closer
 }
 var
   i: integer;
-  p,l: tlabel;
+  l: tlabel;
 begin
   if not isConfigured then
   begin
@@ -846,7 +879,7 @@ begin
           cursor:=eaxlabel.cursor;
 
           tag:=i;
-          onclick:=p.onclick;
+          OnDblClick:=EAXLabelDblClick;
           OnMouseDown:=RegisterMouseDown;
         end;
       end;
@@ -1136,7 +1169,7 @@ procedure TfrmTracer.EAXLabelDblClick(Sender: TObject);
 var s: string;
 begin
   s:=tlabel(sender).Caption;
-  s:=copy(s,5,8);
+  s:=copy(s,5,length(s)-4);
 
   memorybrowser.memoryaddress:=StrToQWordEx('$'+s);
 end;

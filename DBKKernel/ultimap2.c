@@ -8,18 +8,7 @@
 #include "ultimap2.h"
 
 
-typedef ULONG(NTUSERSETWINDOWSHOOKEX)(
-	IN HANDLE hmod,
-	IN PUNICODE_STRING pstrLib OPTIONAL,
-	IN DWORD idThread,
-	IN int nFilterType,
-	IN PVOID pfnFilterProc,
-	IN DWORD dwFlags
-	);
-NTUSERSETWINDOWSHOOKEX OldNtUserSetWindowsHookEx;
 
-
-typedef NTSTATUS(*PSSUSPENDPROCESS)(PEPROCESS p);
 
 
 PSSUSPENDPROCESS PsSuspendProcess;
@@ -41,6 +30,30 @@ int Ultimap2RangeCount;
 PURANGE Ultimap2Ranges = NULL;
 
 PVOID *Ultimap2_DataReady;
+
+
+#if (NTDDI_VERSION < NTDDI_VISTA)
+//implement this function for XP
+unsigned int KeQueryMaximumProcessorCount()
+{
+	CCHAR cpunr;
+	KAFFINITY cpus, original;
+	ULONG cpucount;
+
+	cpucount = 0;
+	cpus = KeQueryActiveProcessors();
+	original = cpus;
+	while (cpus)
+	{
+		if (cpus % 2)
+			cpucount++;
+
+		cpus = cpus / 2;
+	}
+
+	return cpucount;
+}
+#endif
 
 typedef struct
 {	
@@ -76,6 +89,7 @@ typedef struct
 	//for saveToFile mode
 	HANDLE FileHandle;
 	KEVENT FileAccess;
+	UINT64 TraceFileSize;
 
 	volatile BOOL Interrupted;
 }  ProcessorInfo, *PProcessorInfo;
@@ -89,6 +103,7 @@ KEVENT SuspendEvent;
 HANDLE SuspendThreadHandle;
 volatile int suspendCount;
 BOOL ultimapEnabled = FALSE;
+BOOL singleToPASystem = FALSE;
 
 
 void suspendThread(PVOID StartContext)
@@ -188,27 +203,38 @@ NTSTATUS ultimap2_waitForData(ULONG timeout, PULTIMAP2DATAEVENT data)
 		{
 			PProcessorInfo pi = PInfo[cpunr];
 
+			
+
 
 			if (pi->Buffer2FlushSize)
 			{
-				__try
+				if (pi->ToPABuffer2MDL)
 				{
-					data->Address = (UINT64)MmMapLockedPagesSpecifyCache(pi->ToPABuffer2MDL, UserMode, MmCached, NULL, FALSE, NormalPagePriority);
-
-					DbgPrint("MmMapLockedPagesSpecifyCache returned address %p\n", data->Address);
-
-					if (data->Address)
+					__try
 					{
-						data->Size = pi->Buffer2FlushSize;
-						data->CpuID = cpunr;
 
-						pi->MappedAddress = data->Address;
-						r = STATUS_SUCCESS;
+						data->Address = (UINT64)MmMapLockedPagesSpecifyCache(pi->ToPABuffer2MDL, UserMode, MmCached, NULL, FALSE, NormalPagePriority);
+
+						DbgPrint("MmMapLockedPagesSpecifyCache returned address %p\n", data->Address);
+
+						if (data->Address)
+						{
+							data->Size = pi->Buffer2FlushSize;
+							data->CpuID = cpunr;
+
+							pi->MappedAddress = data->Address;
+							r = STATUS_SUCCESS;
+						}
+
+					}
+					__except (1)
+					{
+						DbgPrint("ultimap2_waitForData: Failure mapping memory into waiter process. Count=%d", (int)MmGetMdlByteCount(pi->ToPABuffer2MDL));
 					}
 				}
-				__except (1)
+				else
 				{
-					DbgPrint("ultimap2_waitForData: Failure mapping memory into waiter process. Count=%d", (int)MmGetMdlByteCount(pi->ToPABuffer2MDL));
+					DbgPrint("ToPABuffer2MDL is NULL. Not even gonna try");
 				}
 			}
 			else
@@ -232,12 +258,15 @@ void createUltimap2OutputFile(int cpunr)
 	IO_STATUS_BLOCK iosb;
 	WCHAR Buffer[200];
 	
-	
-
+#ifdef AMD64	
 	DbgPrint("OutputPath=%S", OutputPath);
 	swprintf_s(Buffer, 200, L"%sCPU%d.trace", OutputPath, cpunr);
+#else
+	RtlStringCbPrintfW(Buffer, 200, L"%sCPU%d.trace", OutputPath, cpunr);
+#endif
 
 	DbgPrint("Buffer=%S", Buffer);
+
 
 	RtlInitUnicodeString(&usFile, Buffer);
 
@@ -306,8 +335,12 @@ void WriteThreadForSpecificCPU(PVOID StartContext)
 			if (result)
 			{
 				//write...
-				//DbgPrint("%d: result->index=%d", (int)StartContext, result->index);
-				Size = ((result->index * 511) + ((pi->CurrentSaveOutputMask & 0xffffffff) >> 7)) * 4096 + (pi->CurrentSaveOutputMask >> 32);
+				//DbgPrint("%d: result->index=%d CurrentSaveOutputMask=%p", (int)StartContext, result->index, pi->CurrentSaveOutputMask);
+				if (singleToPASystem)
+					Size = pi->CurrentSaveOutputMask >> 32;
+				else
+					Size = ((result->index * 511) + ((pi->CurrentSaveOutputMask & 0xffffffff) >> 7)) * 4096 + (pi->CurrentSaveOutputMask >> 32);
+
 				if (Size > 0)
 				{
 
@@ -320,7 +353,9 @@ void WriteThreadForSpecificCPU(PVOID StartContext)
 								createUltimap2OutputFile(cpunr); 
 
 							r = ZwWriteFile(pi->FileHandle, NULL, NULL, NULL, &iosb, pi->ToPABuffer2, (ULONG)Size, NULL, NULL);
-							DbgPrint("%d: ZwCreateFile(%p, %d)=%x\n", (int)StartContext, pi->ToPABuffer2, (ULONG)Size, r);
+
+							pi->TraceFileSize += Size;
+							//DbgPrint("%d: ZwCreateFile(%p, %d)=%x\n", (int)StartContext, pi->ToPABuffer2, (ULONG)Size, r);
 
 							KeSetEvent(&pi->FileAccess, 0, FALSE);
 						}
@@ -361,16 +396,19 @@ void WriteThreadForSpecificCPU(PVOID StartContext)
 
 void ultimap2_LockFile(int cpunr)
 {
+	if ((cpunr < 0) || (cpunr >= Ultimap2CpuCount))
+		return;
+
 	if (PInfo)
 	{
 		NTSTATUS wr;
 		PProcessorInfo pi = PInfo[cpunr];
 
-		DbgPrint("AcquireUltimap2File()");
+		//DbgPrint("AcquireUltimap2File()");
 		wr = KeWaitForSingleObject(&pi->FileAccess, Executive, KernelMode, FALSE, NULL);
 		if (wr == STATUS_SUCCESS)
 		{
-			DbgPrint("Acquired");
+			//DbgPrint("Acquired");
 			if (pi->FileHandle)
 			{
 				ZwClose(pi->FileHandle);
@@ -382,13 +420,42 @@ void ultimap2_LockFile(int cpunr)
 
 void ultimap2_ReleaseFile(int cpunr)
 {
+	if ((cpunr < 0) || (cpunr >= Ultimap2CpuCount))
+		return;
+
 	if (PInfo)
 	{
 		PProcessorInfo pi = PInfo[cpunr];
 		KeSetEvent(&pi->FileAccess, 0, FALSE);
-		DbgPrint("Released");
+		//DbgPrint("Released");
 	}
 }
+
+UINT64 ultimap2_GetTraceFileSize()
+//Gets an aproximation of the filesize.  Don't take this too exact
+{
+	UINT64 size = 0;
+	
+	if (PInfo)
+	{
+		int i;
+		for (i = 0; i < Ultimap2CpuCount; i++)
+			size += PInfo[i]->TraceFileSize;
+	}
+	
+	return size;
+}
+
+void ultimap2_ResetTraceFileSize()
+{
+	if (PInfo)
+	{
+		int i;
+		for (i = 0; i < Ultimap2CpuCount; i++)
+			PInfo[i]->TraceFileSize = 0;
+	}	
+}
+
 
 void SwitchToPABuffer(struct _KDPC *Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2)
 /*
@@ -403,28 +470,63 @@ Only called when buffer2 is ready for flushing
 
 	if (pi)
 	{		
-		UINT64 CTL = readMSR(IA32_RTIT_CTL);
-		UINT64 Status = readMSR(IA32_RTIT_STATUS);
+		UINT64 CTL = __readmsr(IA32_RTIT_CTL);
+		UINT64 Status = __readmsr(IA32_RTIT_STATUS);
 		PVOID temp;
 
-		if ((Status >> 5) & 1)
-			DbgPrint("DATA LOSS");
+		if ((Status >> 5) & 1) //Stopped
+			DbgPrint("Not all data recorded");
+
 
 		if ((Status >> 4) & 1)
 			DbgPrint("ALL LOST");
 
 		//only if the buffer is bigger than 2 pages.  That you can check in IA32_RTIT_OUTPUT_MASK_PTRS and IA32_RTIT_OUTPUT_BASE 
-
-		//todo: add a rule that size should be at least 8KB
-		if ((!flushallbuffers) && (((pi->CurrentOutputBase == 0) || ((__readmsr(IA32_RTIT_OUTPUT_BASE) == pi->CurrentOutputBase))) && (((__readmsr(IA32_RTIT_OUTPUT_MASK_PTRS)&0xffffffff) >> 7) < 2))) //still the same output base)
-		  return; //don't flush yet
-
-		DbgPrint("%d: pi->CurrentOutputBase=%p __readmsr(IA32_RTIT_OUTPUT_BASE)=%p __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS)=%p", KeGetCurrentProcessorNumber(), pi->CurrentOutputBase, __readmsr(IA32_RTIT_OUTPUT_BASE), __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS));
+		//if (KeGetCurrentProcessorNumber() == 0)
+		//	DbgPrint("%d: pi->CurrentOutputBase=%p __readmsr(IA32_RTIT_OUTPUT_BASE)=%p __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS)=%p", KeGetCurrentProcessorNumber(), pi->CurrentOutputBase, __readmsr(IA32_RTIT_OUTPUT_BASE), __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS));
 
 
+		if (pi->Interrupted == FALSE)
+		{
+			//return; //debug test. remove me when released
+			
+			if (!singleToPASystem)
+			{
+				if ((!flushallbuffers) && (((__readmsr(IA32_RTIT_OUTPUT_MASK_PTRS) & 0xffffffff) >> 7) < 2))
+					return; //don't flush yet
+			}
+			else
+			{
+				INT64 offset = __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS);
+
+				/*if (KeGetCurrentProcessorNumber() == 0)
+				{
+					DbgPrint("pi->CurrentOutputBase=%p", pi->CurrentOutputBase);
+					DbgPrint("offset=%p", offset);
+				}*/
+
+				offset = offset >> 32;
+
+				//if (KeGetCurrentProcessorNumber() == 0)
+				//	DbgPrint("offset=%p", offset);
+
+				if ((!flushallbuffers) && (((pi->CurrentOutputBase == 0) || (offset < 8192))))
+					return; //don't flush yet
+			}
+		}
+		else
+		{
+			DbgPrint("%d:Flushing because of interrupt", KeGetCurrentProcessorNumber());
+		}
+
+		DbgPrint("%d: Flush this data (%p)", KeGetCurrentProcessorNumber(), __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS));
+		//DbgPrint("%d: pi->CurrentOutputBase=%p __readmsr(IA32_RTIT_OUTPUT_BASE)=%p __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS)=%p", KeGetCurrentProcessorNumber(), pi->CurrentOutputBase, __readmsr(IA32_RTIT_OUTPUT_BASE), __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS));
 
 		__writemsr(IA32_RTIT_CTL, 0); //disable packet generation
 		__writemsr(IA32_RTIT_STATUS, 0);
+
+
+		//DbgPrint("%d: pi->CurrentOutputBase=%p __readmsr(IA32_RTIT_OUTPUT_BASE)=%p __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS)=%p", KeGetCurrentProcessorNumber(), pi->CurrentOutputBase, __readmsr(IA32_RTIT_OUTPUT_BASE), __readmsr(IA32_RTIT_OUTPUT_MASK_PTRS));
 
 		
 		
@@ -465,6 +567,14 @@ Only called when buffer2 is ready for flushing
 
 		__writemsr(IA32_RTIT_OUTPUT_BASE, pi->CurrentOutputBase);
 		__writemsr(IA32_RTIT_OUTPUT_MASK_PTRS, 0);
+
+
+		if ((Status >> 5) & 1) //Stopped
+		{
+			Status = Status ^ (1 << 5); //toggle it off
+			__writemsr(IA32_RTIT_STATUS, Status);
+		}
+
 		__writemsr(IA32_RTIT_CTL, CTL);
 	}
 }
@@ -618,6 +728,7 @@ NTSTATUS ultimap2_flushBuffers()
 	}
 	KeReleaseMutex(&SuspendMutex, FALSE);	
 
+	DbgPrint("ultimap2_flushBuffers exit");
 	return STATUS_SUCCESS;
 }
 
@@ -735,9 +846,12 @@ void ultimap2_setup_dpc(struct _KDPC *Dpc, PVOID DeferredContext, PVOID SystemAr
 	
 	__try
 	{
+		int cpunr = KeGetCurrentProcessorNumber();
 		i = 0;
 
-		__writemsr(IA32_RTIT_OUTPUT_BASE, MmGetPhysicalAddress(PInfo[KeGetCurrentProcessorNumber()]->ToPAHeader).QuadPart);
+		PInfo[cpunr]->CurrentOutputBase = MmGetPhysicalAddress(PInfo[cpunr]->ToPAHeader).QuadPart;
+
+		__writemsr(IA32_RTIT_OUTPUT_BASE, PInfo[cpunr]->CurrentOutputBase);
 		i = 1;
 		__writemsr(IA32_RTIT_OUTPUT_MASK_PTRS, 0);
 		i = 2;
@@ -782,7 +896,7 @@ void ultimap2_setup_dpc(struct _KDPC *Dpc, PVOID DeferredContext, PVOID SystemAr
 			
 		s.Value=__readmsr(IA32_RTIT_STATUS);
 		if (s.Bits.Error)
-			DbgPrint("Setup for cpu %d failed");
+			DbgPrint("Setup for cpu %d failed", KeGetCurrentProcessorNumber());
 		else
 			DbgPrint("Setup for cpu %d succesful", KeGetCurrentProcessorNumber());
 	}
@@ -812,7 +926,7 @@ RTL_GENERIC_COMPARE_RESULTS NTAPI ToPACompare(__in struct _RTL_GENERIC_TABLE *Ta
 {
 	//DbgPrint("Comparing %p with %p", FirstStruct->PhysicalAddress, FirstStruct->PhysicalAddress);
 
-	if (FirstStruct->PhysicalAddress == FirstStruct->PhysicalAddress)
+	if (FirstStruct->PhysicalAddress == SecondStruct->PhysicalAddress)
 		return GenericEqual;
 	else
 	{
@@ -839,24 +953,172 @@ void* setupToPA(PToPA_ENTRY *Header, PVOID *OutputBuffer, PMDL *BufferMDL, PRTL_
 	PToPA_ENTRY r;
 	UINT_PTR Output, Stop;
 	ULONG ToPAIndex = 0;
+	int PABlockSize = 0;
+	int BlockSize;
 
 	PRTL_GENERIC_TABLE x;
 	int i;
-	
-	*OutputBuffer = ExAllocatePoolWithTag(NonPagedPool, BufferSize, 0);
-	if (*OutputBuffer == NULL)
-	{
-		DbgPrint("setupToPA: Failure allocating output buffer");
-		return NULL;
-	}
 
-	r = ExAllocatePoolWithTag(NonPagedPool, getToPAHeaderSize(BufferSize), 0);
-	if (r == NULL)
+	if (singleToPASystem)
 	{
-		ExFreePoolWithTag(*OutputBuffer,0);
-		*OutputBuffer = NULL;
-		DbgPrint("setupToPA: Failure allocating header for buffer");
-		return NULL;
+		
+		PHYSICAL_ADDRESS la,ha, boundary;
+		ULONG newsize;
+
+		BlockSize = BufferSize; //yup, only 1 single entry	
+		
+
+		//get the closest possible
+		if (BlockSize > 64 * 1024 * 1024)
+			{
+				PABlockSize = 15;
+				BlockSize = 128 * 1024 * 1024;
+			}
+			else
+				if (BlockSize > 32 * 1024 * 1024)
+				{
+					PABlockSize = 14;
+					BlockSize = 64 * 1024 * 1024;
+				}
+				else
+					if (BlockSize > 16 * 1024 * 1024)
+					{
+						PABlockSize = 13;
+						BlockSize = 32 * 1024 * 1024;
+					}
+					else
+						if (BlockSize > 8 * 1024 * 1024)
+						{
+							PABlockSize = 12;
+							BlockSize = 16 * 1024 * 1024;
+						}
+						else
+							if (BlockSize > 4 * 1024 * 1024)
+							{
+								PABlockSize = 11;
+								BlockSize = 8 * 1024 * 1024;
+							}
+							else
+								if (BlockSize > 2 * 1024 * 1024)
+								{
+									PABlockSize = 10;
+									BlockSize = 4 * 1024 * 1024;
+								}
+								else
+									if (BlockSize > 1 * 1024 * 1024)
+									{
+										PABlockSize = 9;
+										BlockSize = 2 * 1024 * 1024;
+									}
+									else
+										if (BlockSize > 512 * 1024)
+										{
+											PABlockSize = 8;
+											BlockSize = 1 * 1024 * 1024;
+										}
+										else
+											if (BlockSize > 256 * 1024)
+											{
+												PABlockSize = 7;
+												BlockSize = 512 * 1024;
+											}
+											else
+												if (BlockSize > 128 * 1024)
+												{
+													PABlockSize = 6;
+													BlockSize = 256 * 1024;
+												}
+												else
+													if (BlockSize > 64 * 1024)
+													{
+														PABlockSize = 5;
+														BlockSize = 128 * 1024;
+													}
+													else
+														if (BlockSize > 32 * 1024)
+														{
+															PABlockSize = 4;
+															BlockSize = 64 * 1024;
+														}
+														else
+															if (BlockSize > 16*1024)
+															{
+																PABlockSize = 3;
+																BlockSize = 32 * 1024;
+															}
+															else
+																if (BlockSize > 8 * 1024)
+																{
+																	PABlockSize = 2;
+																	BlockSize = 16 * 1024;
+																}
+																else
+																	if (BlockSize > 4 * 1024)
+																	{
+																		PABlockSize = 1;
+																		BlockSize = 8 * 1024;
+																	}
+																	else
+																	{
+																		PABlockSize = 0;
+																		BlockSize = 4096;
+																	}
+
+		//adjust the buffersize so it is dividable by the blocksize
+		newsize = BlockSize;
+			
+		DbgPrint("BufferSize=%x\n", BufferSize);
+		DbgPrint("BlockSize=%x (PABlockSize=%d)\n", BlockSize, PABlockSize);
+		DbgPrint("newsize=%x\n", newsize);
+
+		
+		la.QuadPart = 0;
+		ha.QuadPart = 0xFFFFFFFFFFFFFFFFULL;
+		boundary.QuadPart = BlockSize;
+
+		*OutputBuffer=MmAllocateContiguousMemorySpecifyCache(newsize, la, ha, boundary, MmCached);
+		//*OutputBuffer=MmAllocateContiguousMemory(newsize, ha);
+
+		DbgPrint("Allocated OutputBuffer at %p", MmGetPhysicalAddress(*OutputBuffer).QuadPart);
+
+		BufferSize = newsize;
+
+		if (*OutputBuffer == NULL)
+		{
+			DbgPrint("setupToPA (Single ToPA System): Failure allocating output buffer");
+			return NULL;
+		}
+
+		r = ExAllocatePoolWithTag(NonPagedPool, 4096, 0);
+		if (r == NULL)
+		{
+			MmFreeContiguousMemory(*OutputBuffer);
+			*OutputBuffer = NULL;
+			DbgPrint("setupToPA (Single ToPA System): Failure allocating header for buffer");
+			return NULL;
+		}
+
+	}
+	else
+	{
+		//Not a single ToPA system
+		BlockSize = 4096;
+
+		*OutputBuffer = ExAllocatePoolWithTag(NonPagedPool, BufferSize, 0);
+		if (*OutputBuffer == NULL)
+		{
+			DbgPrint("setupToPA: Failure allocating output buffer");
+			return NULL;
+		}
+
+		r = ExAllocatePoolWithTag(NonPagedPool, getToPAHeaderSize(BufferSize), 0);
+		if (r == NULL)
+		{
+			ExFreePoolWithTag(*OutputBuffer, 0);
+			*OutputBuffer = NULL;
+			DbgPrint("setupToPA: Failure allocating header for buffer");
+			return NULL;
+		}
 	}
 	
 
@@ -867,7 +1129,10 @@ void* setupToPA(PToPA_ENTRY *Header, PVOID *OutputBuffer, PMDL *BufferMDL, PRTL_
 	if (*gt == NULL)
 	{
 		DbgPrint("Failure allocating table");
-		ExFreePoolWithTag(*OutputBuffer,0);
+		if (singleToPASystem)
+			MmFreeContiguousMemory(*OutputBuffer);
+		else
+			ExFreePoolWithTag(*OutputBuffer,0);
 		*OutputBuffer = NULL;
 
 		ExFreePoolWithTag(*Header,0);
@@ -889,57 +1154,71 @@ void* setupToPA(PToPA_ENTRY *Header, PVOID *OutputBuffer, PMDL *BufferMDL, PRTL_
 	Stop = Output+BufferSize;
 	
 	*BufferMDL = IoAllocateMdl(*OutputBuffer, BufferSize, FALSE, FALSE, NULL);
-
 	MmBuildMdlForNonPagedPool(*BufferMDL);
 
-
-	while (Output<Stop)
+	if (singleToPASystem)
 	{
-		//fill in the topa entries pointing to eachother
-		if ((ToPAIndex+1) % 512 == 0)
-		{
-			//point it to the next ToPA table
-			r[ToPAIndex].Value = MmGetPhysicalAddress(&r[ToPAIndex+1]).QuadPart;
-			r[ToPAIndex].Bits.END = 1;
-
-			tl.index = tl.index++;
-			tl.PhysicalAddress = MmGetPhysicalAddress(&r[ToPAIndex + 1]).QuadPart;
-			RtlInsertElementGenericTable(x, &tl, sizeof(tl), NULL);
-		}
-		else
-		{
-			r[ToPAIndex].Value = (UINT64)MmGetPhysicalAddress((PVOID)Output).QuadPart;
-			Output += 4096;
-		}
-
-		ToPAIndex++;
+		r[0].Value = (UINT64)MmGetPhysicalAddress((PVOID)Output).QuadPart;
+		r[0].Bits.Size = PABlockSize;
+		r[0].Bits.INT = 1;
+		r[0].Bits.STOP = 1;
+		
+		r[1].Value = MmGetPhysicalAddress(&r[0]).QuadPart;
+		r[1].Bits.END = 1;
 	}
-
-	ToPAIndex--;
-	r[ToPAIndex].Bits.STOP = 1;
-	i = (ToPAIndex * 90) / 100; //90%
-
-	if ((i == ToPAIndex) && (i > 0)) //don't interrupt on the very last entry (if possible)
-		i--;
-
-	if ((i>0) && ((i+1) % 512 == 0))
-		i--;
-
-
-	DbgPrint("Interrupt at index %d", i);
-
-	r[i].Bits.INT = 1; //Interrupt after filling this entry 
-
-	//and every 2nd page after this.  (in case of a rare situation where resume is called right after suspend)
-
-	if (ToPAIndex > 0)
+	else
 	{
-		while (i < (int)(ToPAIndex - 1))
+		while (Output < Stop)
 		{
-			if ((i + 1) % 512) //anything but 0
-				r[i].Bits.INT = 1;
+			//fill in the topa entries pointing to eachother
 
-			i += 2;
+
+			if ((ToPAIndex + 1) % 512 == 0)
+			{
+				//point it to the next ToPA table
+				r[ToPAIndex].Value = MmGetPhysicalAddress(&r[ToPAIndex + 1]).QuadPart;
+				r[ToPAIndex].Bits.END = 1;
+
+				tl.index = tl.index++;
+				tl.PhysicalAddress = MmGetPhysicalAddress(&r[ToPAIndex + 1]).QuadPart;
+				RtlInsertElementGenericTable(x, &tl, sizeof(tl), NULL);
+			}
+			else
+			{
+				r[ToPAIndex].Value = (UINT64)MmGetPhysicalAddress((PVOID)Output).QuadPart;
+				r[ToPAIndex].Bits.Size = 0;
+				Output += 4096;
+			}
+
+			ToPAIndex++;
+		}
+
+		ToPAIndex--;
+		r[ToPAIndex].Bits.STOP = 1;
+		i = (ToPAIndex * 90) / 100; //90%
+
+		if ((i == ToPAIndex) && (i > 0)) //don't interrupt on the very last entry (if possible)
+			i--;
+
+		if ((i > 0) && ((i + 1) % 512 == 0))
+			i--;
+
+
+		DbgPrint("Interrupt at index %d", i);
+
+		r[i].Bits.INT = 1; //Interrupt after filling this entry 
+
+		//and every 2nd page after this.  (in case of a rare situation where resume is called right after suspend)
+
+		if (ToPAIndex > 0)
+		{
+			while (i < (int)(ToPAIndex - 1))
+			{
+				if ((i + 1) % 512) //anything but 0
+					r[i].Bits.INT = 1;
+
+				i += 2;
+			}
 		}
 	}
 
@@ -981,6 +1260,17 @@ void SetupUltimap2(UINT32 PID, UINT32 BufferSize, WCHAR *Path, int rangeCount, P
 	int i;
 	UNICODE_STRING s;
 	NTSTATUS r;
+	int cpuid_r[4];
+
+	__cpuidex(cpuid_r, 0x14, 0);
+
+	//if ((cpuid_r[2] & 2) == 0)
+	{
+		DbgPrint("Single ToPA System");
+		singleToPASystem = TRUE;
+	}
+
+
 
 	DbgPrint("Path[0]=%d\n", Path[0]);
 
@@ -1041,11 +1331,7 @@ void SetupUltimap2(UINT32 PID, UINT32 BufferSize, WCHAR *Path, int rangeCount, P
 	}
 
 
-	RtlInitUnicodeString(&s, L"PsSuspendProcess");
-	PsSuspendProcess = MmGetSystemRoutineAddress(&s);
 
-	RtlInitUnicodeString(&s, L"PsResumeProcess");
-	PsResumeProcess = MmGetSystemRoutineAddress(&s);
 
 	if ((PsSuspendProcess == NULL) || (PsResumeProcess == NULL))
 	{
@@ -1090,7 +1376,7 @@ void SetupUltimap2(UINT32 PID, UINT32 BufferSize, WCHAR *Path, int rangeCount, P
 		Ultimap2_DataReady[i] = &PInfo[i]->DataReady;
 
 		KeInitializeDpc(&PInfo[i]->OwnDPC, SwitchToPABuffer, NULL);
-		KeSetTargetProcessorDpc(&PInfo[i]->OwnDPC, i);
+		KeSetTargetProcessorDpc(&PInfo[i]->OwnDPC, (CCHAR)i);
 	}
 	
 	UltimapActive = TRUE;
@@ -1185,15 +1471,34 @@ void DisableUltimap2(void)
 				ZwClose(PInfo[i]->WriterThreadHandle);
 				PInfo[i]->WriterThreadHandle = NULL;
 
+				if (PInfo[i]->ToPABufferMDL)
+				{
+					IoFreeMdl(PInfo[i]->ToPABufferMDL);
+					PInfo[i]->ToPABufferMDL = NULL;
+				}
+
 				if (PInfo[i]->ToPABuffer)
 				{
-					ExFreePoolWithTag(PInfo[i]->ToPABuffer, 0);
+					if (singleToPASystem)
+						MmFreeContiguousMemory(PInfo[i]->ToPABuffer);
+					else
+						ExFreePoolWithTag(PInfo[i]->ToPABuffer, 0);
 					PInfo[i]->ToPABuffer = NULL;
+				}
+
+				if (PInfo[i]->ToPABuffer2MDL)
+				{
+					IoFreeMdl(PInfo[i]->ToPABuffer2MDL);
+					PInfo[i]->ToPABufferMDL = NULL;
 				}
 				
 				if (PInfo[i]->ToPABuffer2)
 				{
-					ExFreePoolWithTag(PInfo[i]->ToPABuffer2, 0);
+					if (singleToPASystem)
+						MmFreeContiguousMemory(PInfo[i]->ToPABuffer2);
+					else
+						ExFreePoolWithTag(PInfo[i]->ToPABuffer2, 0);
+
 					PInfo[i]->ToPABuffer2 = NULL;
 				}
 

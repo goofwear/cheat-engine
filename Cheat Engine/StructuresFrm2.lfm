@@ -12,7 +12,7 @@ object frmStructures2: TfrmStructures2
   OnDestroy = FormDestroy
   OnShow = FormShow
   Position = poScreenCenter
-  LCLVersion = '1.6.0.4'
+  LCLVersion = '1.6.4.0'
   object tvStructureView: TTreeView
     AnchorSideLeft.Control = Owner
     AnchorSideTop.Control = HeaderControl1
@@ -22,8 +22,8 @@ object frmStructures2: TfrmStructures2
     AnchorSideBottom.Control = Owner
     AnchorSideBottom.Side = asrBottom
     Left = 0
-    Height = 282
-    Top = 79
+    Height = 290
+    Top = 71
     Width = 542
     Anchors = [akTop, akLeft, akRight, akBottom]
     BorderStyle = bsNone
@@ -33,13 +33,14 @@ object frmStructures2: TfrmStructures2
     HideSelection = False
     Indent = 19
     MultiSelect = True
-    MultiSelectStyle = [msControlSelect, msShiftSelect, msVisibleOnly, msSiblingOnly]
+    MultiSelectStyle = [msShiftSelect, msVisibleOnly, msSiblingOnly]
     ParentFont = False
     PopupMenu = pmStructureView
     ReadOnly = True
     RowSelect = True
     ShowRoot = False
     TabOrder = 0
+    ToolTips = False
     OnAdvancedCustomDrawItem = tvStructureViewAdvancedCustomDrawItem
     OnCollapsed = tvStructureViewCollapsed
     OnCollapsing = tvStructureViewCollapsing
@@ -47,14 +48,14 @@ object frmStructures2: TfrmStructures2
     OnExpanded = tvStructureViewExpanded
     OnExpanding = tvStructureViewExpanding
     OnMouseDown = tvStructureViewMouseDown
-    Options = [tvoAllowMultiselect, tvoAutoItemHeight, tvoKeepCollapsedNodes, tvoReadOnly, tvoRowSelect, tvoShowButtons, tvoShowLines, tvoToolTips]
+    Options = [tvoAllowMultiselect, tvoAutoItemHeight, tvoKeepCollapsedNodes, tvoReadOnly, tvoRowSelect, tvoShowButtons, tvoShowLines]
   end
   object HeaderControl1: THeaderControl
     AnchorSideTop.Control = pnlGroups
     AnchorSideTop.Side = asrBottom
     Left = 0
     Height = 21
-    Top = 58
+    Top = 50
     Width = 542
     DragReorder = False
     Sections = <    
@@ -71,7 +72,7 @@ object frmStructures2: TfrmStructures2
   end
   object pnlGroups: TScrollBox
     Left = 0
-    Height = 58
+    Height = 50
     Top = 0
     Width = 542
     HorzScrollBar.Increment = 1
@@ -83,6 +84,7 @@ object frmStructures2: TfrmStructures2
     Align = alTop
     Constraints.MinHeight = 50
     TabOrder = 2
+    OnResize = pnlGroupsResize
   end
   object MainMenu1: TMainMenu
     left = 512
@@ -119,7 +121,7 @@ object frmStructures2: TfrmStructures2
       end
       object MenuItem3: TMenuItem
         Caption = 'Save values'
-        ShortCut = 16467
+        ShortCut = 49235
         OnClick = MenuItem3Click
       end
       object N7: TMenuItem
@@ -241,6 +243,10 @@ object frmStructures2: TfrmStructures2
       object miDefaultHexadecimal: TMenuItem
         Caption = 'New integer types default to hexadecimal'
         OnClick = miDefaultHexadecimalClick
+      end
+      object miRLECompression: TMenuItem
+        Caption = 'Enable RLE Compression'
+        OnClick = miRLECompressionClick
       end
     end
   end

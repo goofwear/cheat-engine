@@ -2,10 +2,10 @@ object frmChangedAddresses: TfrmChangedAddresses
   Left = 607
   Height = 285
   Top = 128
-  Width = 379
+  Width = 411
   Caption = 'Changed Addresses'
   ClientHeight = 285
-  ClientWidth = 379
+  ClientWidth = 411
   OnClose = FormClose
   OnCreate = FormCreate
   OnDestroy = FormDestroy
@@ -16,7 +16,7 @@ object frmChangedAddresses: TfrmChangedAddresses
     Left = 0
     Height = 15
     Top = 0
-    Width = 379
+    Width = 411
     Align = alTop
     Caption = 'The following addresses have been changed by the code you selected'
     ParentColor = False
@@ -26,12 +26,12 @@ object frmChangedAddresses: TfrmChangedAddresses
     Left = 0
     Height = 33
     Top = 252
-    Width = 379
+    Width = 411
     Align = alBottom
     Anchors = [akRight, akBottom]
     AutoSize = True
     ClientHeight = 33
-    ClientWidth = 379
+    ClientWidth = 411
     TabOrder = 0
     object OKButton: TButton
       AnchorSideLeft.Control = Panel1
@@ -54,7 +54,7 @@ object frmChangedAddresses: TfrmChangedAddresses
       AnchorSideTop.Control = OKButton
       AnchorSideRight.Control = Panel1
       AnchorSideRight.Side = asrBottom
-      Left = 196
+      Left = 228
       Height = 23
       Top = 4
       Width = 179
@@ -78,7 +78,7 @@ object frmChangedAddresses: TfrmChangedAddresses
     Left = 0
     Height = 237
     Top = 15
-    Width = 379
+    Width = 411
     Align = alClient
     Columns = <    
       item
@@ -144,6 +144,19 @@ object frmChangedAddresses: TfrmChangedAddresses
       Caption = 'Copy selected addresses to addresslist'
       ShortCut = 49219
       OnClick = ChangedlistDblClick
+    end
+    object MenuItem2: TMenuItem
+      Caption = '-'
+    end
+    object miDeleteSelectedEntries: TMenuItem
+      Caption = 'Delete selected entries'
+      ShortCut = 46
+      OnClick = miDeleteSelectedEntriesClick
+    end
+    object miResetCount: TMenuItem
+      Caption = 'Reset count'
+      ShortCut = 49234
+      OnClick = miResetCountClick
     end
   end
 end

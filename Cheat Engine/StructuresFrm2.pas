@@ -6,7 +6,7 @@ unit StructuresFrm2;
 interface
 
 uses
-  windows, Classes, LCLProc, SysUtils, FileUtil, Forms, Controls, Graphics, Dialogs, ExtCtrls, math,
+  windows, win32proc, Classes, LCLProc, SysUtils, FileUtil, Forms, Controls, Graphics, Dialogs, ExtCtrls, math,
   StdCtrls, ComCtrls, Menus, lmessages, scrolltreeview, byteinterpreter, symbolhandler, cefuncproc,
   newkernelhandler, frmSelectionlistunit, frmStructuresConfigUnit, registry, Valuechange, DOM,
   XMLRead, XMLWrite, Clipbrd, CustomTypeHandler, strutils, dotnetpipe, DotNetTypes, commonTypeDefs,
@@ -100,6 +100,7 @@ type
     fAutoDestroy: boolean;
     fAutoFill: boolean;
     fDefaultHex: boolean;
+    fRLECompression: boolean;
 
 
     fUpdateCounter: integer;
@@ -124,6 +125,7 @@ type
     procedure setAutoDestroy(state: boolean);
     procedure setAutoFill(state: boolean);
     procedure setDefaultHex(state: boolean);
+    procedure setRLECompression(state: boolean);
   public
     constructor create(name: string);
     constructor createFromXMLNode(structure: TDOMNode);
@@ -171,6 +173,7 @@ type
     property AutoFill: boolean read fAutoFill write setAutoFill;
     property count: integer read getElementCount;
     property element[Index: Integer]: TStructelement read getElement; default;
+    property RLECompression: boolean read fRLECompression write setRLECompression;
   published
     property DefaultHex: boolean read fDefaultHex write setDefaultHex;
   end;
@@ -202,6 +205,7 @@ type
     procedure RenameClick(sender: tobject);
     procedure DeleteClick(sender: Tobject);
     procedure setGroupName(newname: string);
+    procedure groupboxresize(sender: TObject);
   public
     function getParent: TfrmStructures2;
     function AColumnHasSetCaption: boolean;
@@ -275,6 +279,10 @@ type
     function getFocused: boolean;
     function getGlobalIndex: integer;
     procedure setNewParent(group: TStructGroup);
+
+    function getName: string;
+
+    procedure setAnchorsForPos(i: integer);
   public
     currentNodeAddress: string;    //temporary storage for rendering
     currentNodeValue: string;
@@ -311,6 +319,7 @@ type
     property CompareValue: string read fcompareValue write fcompareValue;
     property GlobalIndex: integer read getGlobalIndex;
     property AddressText: string read getAddressText write setAddressText;
+    property Name: string read getName;
   end;
 
   TfrmStructures2 = class(TForm)
@@ -330,6 +339,7 @@ type
     miEverythingHex: TMenuItem;
     miGenerateGroupscan: TMenuItem;
     miDefaultHexadecimal: TMenuItem;
+    miRLECompression: TMenuItem;
     miFindRelations: TMenuItem;
     miShowTypeForEntriesWithNoDescription: TMenuItem;
     miAutoDestroyLocal: TMenuItem;
@@ -408,6 +418,7 @@ type
     procedure miAutostructsizeClick(Sender: TObject);
     procedure miChangeColorsClick(Sender: TObject);
     procedure miDefaultHexadecimalClick(Sender: TObject);
+    procedure miRLECompressionClick(Sender: TObject);
     procedure miDoNotSaveLocalClick(Sender: TObject);
     procedure miFillGapsClick(Sender: TObject);
     procedure miFindRelationsClick(Sender: TObject);
@@ -432,6 +443,7 @@ type
     procedure miUpdateIntervalClick(Sender: TObject);
     procedure pnlGroupsClick(Sender: TObject);
     procedure miRecalculateAddressClick(Sender: TObject);
+    procedure pnlGroupsResize(Sender: TObject);
     procedure Renamestructure1Click(Sender: TObject);
     procedure Save1Click(Sender: TObject);
     procedure tmFixGuiTimer(Sender: TObject);
@@ -783,7 +795,8 @@ begin
   if self.ChildStructStart<>0 then
     elementnode.SetAttribute('ChildStructStart', IntToStr(self.ChildStructStart));
 
-  elementnode.SetAttribute('BackgroundColor', IntToHex(backgroundcolor, 6));
+  if backgroundcolor<>clWindow then
+    elementnode.SetAttribute('BackgroundColor', IntToHex(backgroundcolor, 6));
 
 
   if (self.isPointer) and (self.ChildStruct<>nil) then
@@ -797,7 +810,10 @@ begin
     begin
       //local struct, only save if allowed
       if (parent<>nil) and (parent.doNotSaveLocal=false) then  //save this whole struct
+      begin
+        ChildStruct.fRLECompression:=parent.fRLECompression;
         ChildStruct.WriteToXMLNode(elementnode);
+      end;
     end;
   end;
 
@@ -1697,7 +1713,8 @@ end;
 
 procedure TDissectedStruct.WriteToXMLNode(node: TDOMNode);
 var
-  i: integer;
+  i,j: integer;
+  RLECount: integer;
   doc: TDOMDocument;
 
   structnode: TDOMElement;
@@ -1716,11 +1733,40 @@ begin
   TDOMElement(structnode).SetAttribute('AutoDestroy',BoolToStr(fAutoDestroy,'1','0'));
   TDOMElement(structnode).SetAttribute('AutoFill',BoolToStr(fAutoFill,'1','0'));
   TDOMElement(structnode).SetAttribute('DefaultHex',BoolToStr(fDefaultHex,'1','0'));
+  TDOMElement(structnode).SetAttribute('RLECompression',BoolToStr(fRLECompression,'1','0'));
 
   elementnodes:=TDOMElement(structnode.AppendChild(TDOMNode(doc.CreateElement('Elements'))));
 
+  RLECount:=0;
   for i:=0 to count-1 do
+  begin
+    if RLECount>0 then begin dec(RLECount); Continue; end;
+
+    if fRLECompression then
+    for j:=i to count-2 do
+      if ( element[j].Bytesize=element[j+1].Bytesize ) and
+         ( element[j].Name=element[j+1].Name ) and
+         ( element[j].DisplayMethod=element[j+1].DisplayMethod ) and
+         ( element[j].BackgroundColor=element[j+1].BackgroundColor ) and
+         ( (element[j].Bytesize+element[j].Offset) = element[j+1].Offset ) and
+         ( element[j].VarType=element[j+1].VarType ) and
+         ( element[j].ChildStruct=nil ) and ( element[j+1].ChildStruct=nil ) and
+
+         ( ((element[j].CustomType=nil) and (element[j+1].CustomType=nil)) or
+           ((element[j].CustomType<>nil) and (element[j+1].CustomType<>nil) and
+            (element[j].CustomType.name=element[j+1].CustomType.name)) )
+
+      then Inc(RLECount) else break;
+
     element[i].WriteToXMLNode(elementnodes);
+
+    if RLECount<>0 then
+    begin
+      TDOMElement(elementnodes.LastChild).SetAttribute('RLECount',IntToStr(RLECount+1));
+      if element[i].VarType=vtPointer then
+        TDOMElement(elementnodes.LastChild).SetAttribute('PointerSize',IntToStr(element[i].Bytesize));
+    end;
+  end;
 end;
 
 procedure TDissectedStruct.fillDelayLoadedChildstructs;
@@ -1791,12 +1837,19 @@ begin
   DoOptionsChangedNotification;
 end;
 
+procedure TDissectedStruct.setRLECompression(state: boolean);
+begin
+  fRLECompression:=state;
+  DoOptionsChangedNotification;
+end;
+
 procedure TDissectedStruct.setupDefaultSettings;
 //loads the default settings for new structures
 var reg: Tregistry;
 begin
   fAutoCreate:=true; //default settings in case of no previous settings
   fAutoCreateStructsize:=4096;
+  fRLECompression:=true;
 
   reg:=tregistry.create;
   try
@@ -1980,7 +2033,7 @@ constructor TDissectedStruct.createFromXMLNode(structure: TDOMNode);
 var
   elementnodes, elementnode: TDOMElement;
   childnode: TDOMElement;
-  i: integer;
+  i,j: integer;
   se: TStructelement;
 
   offset: integer;
@@ -2013,13 +2066,33 @@ begin
       fAutoDestroy:=TDOMElement(structure).GetAttribute('AutoDestroy')='1';
       fAutoFill:=TDOMElement(structure).GetAttribute('AutoFill')='1';
       fDefaultHex:=TDOMElement(structure).GetAttribute('DefaultHex')='1';
+      fRLECompression:=TDOMElement(structure).GetAttribute('RLECompression')='1';
 
 
       elementnodes:=TDOMElement(structure.FindNode('Elements'));
       if elementnodes<>nil then
       begin
         for i:=0 to elementnodes.ChildNodes.Count-1 do
-          structelementlist.Add(TStructelement.createFromXMLElement(self, TDOMELement(elementnodes.ChildNodes[i])));
+        begin
+          elementnode:=TDOMELement(elementnodes.ChildNodes[i]);
+
+          if elementnode.Attributes.GetNamedItem('RLECount')=nil then
+            structelementlist.Add(TStructelement.createFromXMLElement(self,elementnode))
+          else
+          begin
+            if elementnode.Attributes.GetNamedItem('PointerSize')<>nil then
+              Bytesize:=strtoint(elementnode.GetAttribute('PointerSize'));
+
+            for j:=1 to strtoint(elementnode.GetAttribute('RLECount')) do
+            begin
+              se:=TStructelement.createFromXMLElement(self,TDOMELement(elementnode));
+              if se.VarType=vtPointer then se.Offset:=se.Offset+   Bytesize*(j-1)
+              else                         se.Offset:=se.Offset+se.Bytesize*(j-1);
+              structelementlist.Add(se);
+            end;
+          end;
+
+        end;
 
 
         sortElements;
@@ -2082,18 +2155,33 @@ begin
 end;
 
 procedure TStructColumn.setNewParent(group: TStructGroup);
+var i: integer;
+   oldparent: TStructGroup;
 begin
+  oldparent:=parent;
+  i:=parent.fcolumns.IndexOf(self);
+
   parent.fcolumns.Remove(self);
+
+  if i<parent.fcolumns.Count then
+    TStructColumn(parent.fcolumns[i]).setAnchorsForPos(i);
 
   if parent.fcolumns.Count=0 then //group has 0 entries , destroy the group
     parent.Free;
 
 
+
   parent:=group;
-  parent.fcolumns.Add(self);
+  i:=parent.fcolumns.Add(self);
 
   edtAddress.parent:=group.box;
   focusedShape.parent:=group.box;
+  if lblname<>nil then
+    lblName.parent:=group.box;
+
+  setAnchorsForPos(i);
+
+
 
   group.setPositions; //update the gui
 end;
@@ -2272,6 +2360,14 @@ begin
   edtAddressChange(nil);
 end;
 
+function TStructColumn.getName: string;
+begin
+  if lblname<>nil then
+    result:=lblName.Caption
+  else
+    result:='';
+end;
+
 function TStructColumn.LockAddress(shownaddress: ptruint; memoryblock: pointer; size: integer): boolean;
 var
   x: ptruint;
@@ -2427,13 +2523,32 @@ begin
 end;
 
 procedure TStructColumn.SetCaptionClick(sender: TObject);
-var newname: string;
+var
+  i: integer;
+  newname: string;
 begin
+  parent.parent.AutoSize:=false;
+
   newname:=lblname.caption;
   if InputQuery(rsSF2NewColumnName, rsSF2WhatNameShouldThisColumnHave, newname) then
     lblname.caption:=newname;
 
-  parent.setPositions;
+  lblname.visible:=lblname.caption<>'';
+
+  if lblname.Width+4>edtAddress.Width then
+  begin
+    edtAddress.Width:=lblname.width+4;
+    focusedShape.Width:=edtAddress.width+2*(focusedshape.Pen.Width);
+  end;
+
+  //update the header text as well
+  for i:=0 to parent.parent.columnCount-1 do
+    if parent.parent.columns[i]=self then
+    begin
+      parent.parent.HeaderControl1.Sections[i+1].Text:=newname;
+      break;
+    end;
+
 end;
 
 procedure TStructColumn.MenuPopup(sender: TObject);
@@ -2444,48 +2559,61 @@ begin
 end;
 
 procedure TStructColumn.SetProperEditboxPosition;
-var
-  i: integer;
-  edtWidth: integer;
-  edtLeft: integer;
 begin
-  i:=parent.fcolumns.IndexOf(self);
 
+end;
+
+procedure TStructColumn.setAnchorsForPos(i: integer);
+begin
   if i=0 then
   begin
-    edtWidth:=120;
-    edtLeft:=3;
+    edtAddress.AnchorSideTop.control:=parent.box;
+    edtAddress.AnchorSideTop.side:=asrTop;
+    edtAddress.BorderSpacing.Top:=4;
+
+    edtAddress.AnchorSideLeft.control:=parent.box;
+    edtAddress.AnchorSideLeft.side:=asrLeft;
+    edtAddress.BorderSpacing.Left:=4;
   end
   else
   begin
-    //get the editwidth of the previous item in the columns list
-    edtWidth:=parent.columns[i-1].EditWidth;
-    edtLeft:=parent.columns[i-1].EditLeft+edtWidth+3;
+    edtAddress.AnchorSideTop.control:=parent.columns[i-1].edtAddress;
+    edtAddress.AnchorSideTop.side:=asrTop;
+    edtAddress.BorderSpacing.Top:=0;
+
+    edtAddress.AnchorSideLeft.control:=parent.columns[i-1].edtAddress;
+    edtAddress.AnchorSideLeft.side:=asrRight;
+    edtAddress.BorderSpacing.Left:=4;
   end;
 
-  edtAddress.left:=edtLeft;
-  edtAddress.ClientWidth:=edtWidth;
 
 
+  if focusedShape<>nil then
+  begin
+    focusedShape.AnchorSideLeft.Control:=edtAddress;
+    focusedShape.AnchorSideLeft.Side:=asrCenter;
+    focusedShape.AnchorSideTop.Control:=edtAddress;
+    focusedShape.AnchorSideTop.Side:=asrCenter;
+  end;
 
-  if parent.AColumnHasSetCaption then
-    edtAddress.top:=((parent.box.clientHeight div 2)-((edtAddress.height+lblname.height) div 2))
-  else
-    edtAddress.top:=(parent.box.clientHeight div 2)-(edtAddress.height div 2);
+  if lblname<>nil then
+  begin
+    lblname.AnchorSideTop.Control:=edtAddress;
+    lblname.AnchorSideTop.Side:=asrBottom;
+    lblname.AnchorSideLeft.control:=edtAddress;
+    lblname.AnchorSideLeft.side:=asrCenter;
+  end;
 
-  focusedShape.Left:=edtAddress.left-1;
-  focusedShape.Width:=edtAddress.width+2;
-  focusedShape.Top:=edtAddress.top-1;
-  focusedShape.Height:=edtAddress.Height+2;
 
-  lblname.left:=edtAddress.left;
-  lblname.width:=edtAddress.width;
-  lblname.Top:=edtAddress.top+edtAddress.height+2;
 end;
 
 constructor TStructColumn.create(parent: TStructGroup);
 var hsection: THeaderSection;
   s: TMenuItem;
+  i: integer;
+  marginsize: integer;
+
+  fsmultiplication: single;
 begin
   if parent=nil then raise exception.create(rsSF2TStructColumnCreateError);
   self.parent:=parent;
@@ -2552,12 +2680,13 @@ begin
 
 
 
-  parent.fcolumns.add(self);
+  i:=parent.fcolumns.add(self);
 
   focusedShape:=TShape.Create(parent.parent);
   focusedShape.Shape:=stRectangle;  //stRoundRect;
   focusedShape.visible:=false;
   focusedShape.parent:=parent.box;
+
 
   edtAddress:=TEdit.Create(parent.parent);
   edtAddress.Tag:=ptruint(self);
@@ -2567,29 +2696,65 @@ begin
   edtAddress.Parent:=parent.box;
   edtAddress.OnMouseDown:=edtaddressMousedown;
 
+ // setAnchorsForPos(i);
+  edtAddress.BorderSpacing.Bottom:=3;
+  edtAddress.BorderSpacing.Right:=4;
+
+
+  if WindowsVersion>=wvVista then
+  begin
+    marginsize:=sendmessage(edtAddress.Handle, EM_GETMARGINS, 0,0);
+    marginsize:=(marginsize shr 16)+(marginsize and $ffff);
+  end
+  else
+    marginsize:=8;
+
+  edtAddress.ClientWidth:=parent.parent.Canvas.TextWidth('DDDDDDDDFFFF')+marginsize;
+  edtAddress.Constraints.MinWidth:=edtAddress.Width;
+
+  focusedShape.Width:=edtAddress.width+2*(focusedshape.Pen.Width);
+  focusedShape.Height:=edtAddress.Height+2*(focusedshape.Pen.Width);
+
+
+
   hsection:=parent.parent.headercontrol1.Sections.Add;
   hsection.Text:=rsAddressValue;
   hsection.Width:=parent.parent.headercontrol1.Sections[parent.parent.headercontrol1.Sections.Count-2].width;
   hsection.MinWidth:=20;
 
   lblName:=tlabel.create(parent.parent);
-  lblName.AutoSize:=false;
+  lblName.AutoSize:=true;
   lblName.parent:=edtAddress.Parent;
   lblName.Alignment:=taCenter;
+  lblName.visible:=false;
+
+  setAnchorsForPos(i);
 
   parent.setPositions;
   Address:=MemoryBrowser.hexview.address;
 
   backlist:=TStack.Create;
+
 end;
 
 destructor TStructColumn.destroy;
 var i: integer;
 begin
+  for i:=0 to parent.columnCount-2 do
+    if parent.columns[i]=self then
+    begin
+      parent.columns[i+1].edtAddress.BorderSpacing:=edtaddress.BorderSpacing;
+      parent.columns[i+1].edtAddress.AnchorSideTop:=edtAddress.AnchorSideTop;
+      parent.columns[i+1].edtAddress.AnchorSideLeft:=edtAddress.AnchorSideLeft;
+      break;
+    end;
+
   parent.fcolumns.remove(self);
   parent.parent.headercontrol1.Sections.Delete(parent.parent.HeaderControl1.Sections.Count-1);
 
   clearSavedState;
+
+
 
   if edtAddress<>nil then
     freeandnil(edtAddress);
@@ -2597,7 +2762,10 @@ begin
   if focusedShape<>nil then
     focusedShape.free;
 
-  parent.setPositions;
+  if lblname<>nil then
+    lblname.free;
+
+  //parent.setPositions;
 
   if parent.fcolumns.Count=0 then
   begin
@@ -2652,6 +2820,21 @@ begin
     free;
 end;
 
+procedure TStructGroup.groupboxresize(sender: TObject);
+var
+  i: integer;
+  preferedheight: integer;
+begin
+  groupbox.OnResize:=nil;
+  preferedheight:=10;
+  for i:=0 to parent.groupcount-1 do
+    preferedheight:=max(parent.group[i].GroupBox.Height+2, preferedheight);
+
+  parent.pnlGroups.ClientHeight:=preferedheight;
+
+  groupbox.OnResize:=groupboxresize;
+end;
+
 function TStructGroup.getColumnCount: integer;
 begin
   result:=fcolumns.count;
@@ -2688,9 +2871,10 @@ begin
 end;
 
 constructor TStructGroup.create(parent: TfrmStructures2; GroupName: string);
+var i: integer;
 begin
   self.parent:=parent;
-  parent.fgroups.Add(self);
+  i:=parent.fgroups.Add(self);
 
   fGroupName:=groupname;
 
@@ -2712,15 +2896,47 @@ begin
   GroupBox.Caption:=groupname;
   GroupBox.height:=parent.pnlGroups.ClientHeight;
   groupbox.parent:=parent.pnlGroups;
-  //groupbox.AutoSize:=true;
+  groupbox.AutoSize:=true;
+
+  groupbox.OnResize:=groupboxresize;
 
   groupbox.popupmenu:=grouppopup;
+
+  if i=0 then
+  begin
+    groupbox.AnchorSideTop.Control:=parent.pnlGroups;
+    groupbox.AnchorSideTop.Side:=asrTop;
+
+    groupbox.AnchorSideLeft.Control:=parent.pnlGroups;
+    groupbox.AnchorSideLeft.Side:=asrLeft;
+  end
+  else
+  begin
+    groupbox.AnchorSideTop.Control:=parent.group[i-1].GroupBox;
+    groupbox.AnchorSideTop.Side:=asrTop;
+
+    groupbox.AnchorSideLeft.Control:=parent.group[i-1].GroupBox;
+    groupbox.AnchorSideLeft.Side:=asrRight;
+    groupbox.BorderSpacing.Left:=8;
+  end;
+
 end;
 
 destructor TStructGroup.destroy;
 var i: integer;
+  g: tgroupbox;
 begin
   //delete all the columns first
+  i:=parent.fgroups.IndexOf(self);
+  if i<parent.fgroups.count-1 then
+  begin
+    //has stuff right of it
+    g:=TStructGroup(parent.fgroups[i+1]).GroupBox;
+
+    g.AnchorSideTop:=groupbox.AnchorSideTop;
+    g.AnchorSideLeft:=groupbox.AnchorSideLeft;
+    g.BorderSpacing.Left:=groupbox.BorderSpacing.Left;
+  end;
 
   parent.fgroups.Remove(self);
 
@@ -2732,9 +2948,6 @@ begin
 
   if grouppopup<>nil then
     freeandnil(grouppopup);
-
-  //reposition
-  setPositions;
 
   inherited destroy;
 end;
@@ -2788,6 +3001,7 @@ begin
   tvStructureView.onHScroll:=TreeViewHScroll;
   tvStructureView.onVScroll:=TreeViewVScroll;
 
+
   frmStructures2.Add(self);
 
   RefreshStructureList; //get the current structure list
@@ -2834,6 +3048,9 @@ begin
   tvStructureView.Font.Height:=GetFontData(font.handle).Height;
   if tvStructureView.Font.Height>-15 then
     tvStructureView.Font.Height:=-15;
+
+  if (frmStructuresConfig<>nil) and (frmStructuresConfig.customfont) then
+    tvStructureView.font.Assign(frmStructuresConfig.GroupBox1.Font);
 end;
 
 
@@ -2933,9 +3150,9 @@ var realaddress, realaddress2: PtrUInt;
     savedstate: ptruint;
 begin
   savedstate:=ptruint(c.getSavedState);
-
-
   realaddress2:=address;
+
+
   for i:=length(offsets)-1 downto 0 do
   begin
     realaddress:=0;
@@ -2948,6 +3165,7 @@ begin
       realaddress2:=realaddress+offsets[i]
     else
     begin
+      hasError:=true;
       result:=0;
 
       exit;
@@ -2955,6 +3173,8 @@ begin
   end;
 
   result:=realAddress2;
+
+
   hasError:=false;
 end;
 
@@ -3268,6 +3488,7 @@ var n: TStructelement;
   address, address2: ptruint;
   c: TStructColumn;
   x: ptruint;
+  temp: byte;
   savedstate: PtrUInt;
   structName: string;
 begin
@@ -3321,6 +3542,7 @@ begin
       if not error then
       begin
         //dereference the pointer and fill it in if possible
+
         if ReadProcessMemory(processhandle, pointer(address), @address, processhandler.pointersize, x) then
         begin
           //adjust the address again if it's inside the savedstate
@@ -3328,7 +3550,7 @@ begin
             address:=address+(savedstate-c.address);
 
           //check if the address pointed to is readable
-          if ReadProcessMemory(processhandle, pointer(address), @x, 1, x) then 
+          if ReadProcessMemory(processhandle, pointer(address), @temp, 1, x) then
           begin
             structName:=lookupStructureName(address, rsSF2AutocreatedFrom+inttohex(address,8));
             n.AutoCreateChildStruct(structName, address)
@@ -4003,6 +4225,7 @@ begin
 
             onFullStructChange(mainstruct);
             RefreshStructureList;
+            UpdateCurrentStructOptions;
           end;
         end;
       end;
@@ -4232,6 +4455,11 @@ begin
   end;
 end;
 
+procedure TfrmStructures2.pnlGroupsResize(Sender: TObject);
+begin
+
+end;
+
 
 procedure TfrmStructures2.miDeleteElementClick(Sender: TObject);
 var elementlist: Tlist;
@@ -4430,7 +4658,20 @@ var i,j: integer;
 begin
   f.clear;
 
-  for i:=0 to tvStructureView.Items.Count-1 do
+  s:='Offset-Description';
+  s:=padright(s,25);
+  for j:=0 to columncount-1 do
+  begin
+    if miShowAddresses.checked then
+      s:=s+PadRight(columns[j].Name,30)
+    else
+      s:=s+PadRight(columns[j].Name,20);
+  end;
+
+  f.add(s);
+
+
+  for i:=1 to tvStructureView.Items.Count-1 do
   begin
     node:=tvStructureView.Items[i];
     se:=getStructElementFromNode(node);
@@ -4858,11 +5099,21 @@ var
   a: ptruint;
   error: boolean;
   x: ptruint;
+  c: TStructColumn;
+  savedstate: ptruint;
 begin
   n:=tvStructureView.Selected;
   if n<>nil then
   begin
-    a:=getAddressFromNode(n, getFocusedColumn, error);
+    c:=getFocusedColumn;
+    a:=getAddressFromNode(n, c, error);
+
+    savedstate:=ptruint(c.getSavedState);
+
+    if (savedstate<>0) and (InRangeX(a, c.Address, c.address+ c.getSavedStateSize)) then
+       a:=a+(savedstate-c.address);
+
+
 
     if not error then
     begin
@@ -5001,6 +5252,7 @@ begin
     miDoNotSaveLocal.checked:=mainstruct.DoNotSaveLocal;
     miAutoFillGaps.Checked:=mainStruct.AutoFill;
     miDefaultHexadecimal.checked:=mainstruct.DefaultHex;
+    miRLECompression.checked:=mainstruct.RLECompression;
 
     caption:=rsStructureDissect+':'+mainStruct.name;
   end
@@ -5012,13 +5264,18 @@ end;
 procedure TfrmStructures2.miChangeColorsClick(Sender: TObject);
 begin
   //show and wait for the user
+  frmStructuresConfig.groupbox1.Font.assign(tvStructureView.Font);
+
   if frmStructuresConfig.showmodal=mrok then
   begin
     //just apply new colors
     setupColors; //gets the colors from the structures config
 
+
     //and show the new colors
     RefreshVisibleNodes;
+
+    tvStructureView.Font.Assign(frmStructuresConfig.groupbox1.Font);
   end;
 end;
 
@@ -5026,6 +5283,12 @@ procedure TfrmStructures2.miDefaultHexadecimalClick(Sender: TObject);
 begin
   if mainstruct<>nil then
     mainstruct.DefaultHex:=not mainstruct.DefaultHex;
+end;
+
+procedure TfrmStructures2.miRLECompressionClick(Sender: TObject);
+begin
+  if mainstruct<>nil then
+    mainstruct.RLECompression:=not mainstruct.RLECompression;
 end;
 
 
@@ -5396,7 +5659,7 @@ begin
   //if first column is doubleclicked edit the type, else edit the value
   m:=mouse.CursorPos;
   m:=tvStructureView.ScreenToClient(m);
-  c:=getColumnAtXPos(m.x);
+  c:=getColumnAtXPos(m.x+tvStructureView.ScrolledLeft);
 
   if c=nil then
     miChangeElementClick(miChangeElement)
@@ -5433,6 +5696,7 @@ var
   maxh: integer;
   i,j, h: integer;
 begin
+  {
   maxh:=0;
 
   //first get the height needed
@@ -5475,7 +5739,7 @@ begin
       group[i].box.width:=20;
   end;
 
-  pnlGroups.ClientHeight:=group[0].GroupBox.top+group[0].GroupBox.Height+2;
+  pnlGroups.ClientHeight:=group[0].GroupBox.top+group[0].GroupBox.Height+2;  }
 end;
 
 initialization

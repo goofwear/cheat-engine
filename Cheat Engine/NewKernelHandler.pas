@@ -8,7 +8,7 @@ interface
 uses classes, sysutils, unixporthelper;
 {$else}
 uses jwawindows, windows,LCLIntf,sysutils, dialogs, classes, controls,
-     dbk32functions, vmxfunctions,debug, multicpuexecution, contnrs;
+     dbk32functions, vmxfunctions,debug, multicpuexecution, contnrs, Clipbrd;
 {$endif}
 
 const dbkdll='DBK32.dll';
@@ -569,7 +569,7 @@ procedure UseDBKQueryMemoryRegion;
 procedure UseDBKReadWriteMemory;
 procedure UseDBKOpenProcess;
 
-procedure DBKFileAsMemory(filename:string); overload;
+procedure DBKFileAsMemory(fn:string); overload;
 procedure DBKFileAsMemory; overload;
 function VirtualQueryExPhysical(hProcess: THandle; lpAddress: Pointer; var lpBuffer: TMemoryBasicInformation; dwLength: DWORD): DWORD; stdcall;
 procedure DBKPhysicalMemory;
@@ -593,7 +593,10 @@ function Is64BitProcess(processhandle: THandle): boolean;
 
 //I could of course have made it a parameter thing, but I'm lazy
 
+
 function WriteProcessMemory(hProcess: THandle; const lpBaseAddress: Pointer; lpBuffer: Pointer; nSize: DWORD; var lpNumberOfBytesWritten: PTRUINT): BOOL; stdcall;
+
+
 
 
 var
@@ -743,7 +746,10 @@ var
   dbvm_read_physical_memory: Tdbvm_read_physical_memory;
   dbvm_write_physical_memory: Tdbvm_write_physical_memory; }
 
-var WindowsKernel: Thandle;
+var
+    WindowsKernel: Thandle;
+    NTDLLHandle: THandle;
+
     //DarkByteKernel: Thandle;
     DBKLoaded: boolean;
 
@@ -769,7 +775,7 @@ uses
      dbvmPhysicalMemoryHandler, //'' for physical mem
      {$endif}
      filehandler,  //so I can let readprocessmemory point to ReadProcessMemoryFile in filehandler
-     autoassembler, frmEditHistoryUnit;
+     autoassembler, frmEditHistoryUnit, frmautoinjectunit;
 {$endif}
 
 
@@ -787,7 +793,7 @@ resourcestring
 
 
 
-
+{$ifndef JNI}
 function WriteProcessMemory(hProcess: THandle; const lpBaseAddress: Pointer; lpBuffer: Pointer; nSize: DWORD; var lpNumberOfBytesWritten: PTRUINT): BOOL; stdcall;
 var
   wle: PWriteLogEntry;
@@ -820,6 +826,14 @@ begin
   end;
 
 end;
+{$else}
+
+function WriteProcessMemory(hProcess: THandle; const lpBaseAddress: Pointer; lpBuffer: Pointer; nSize: DWORD; var lpNumberOfBytesWritten: PTRUINT): BOOL; stdcall;
+begin
+  result:=WriteProcessMemoryActual(hProcess, lpBaseAddress, lpbuffer, nSize, lpNumberOfBytesWritten);
+end;
+
+{$endif}
 
 function VirtualQueryEx_StartCache_stub(hProcess: THandle; flags: dword): boolean;
 begin
@@ -1200,11 +1214,12 @@ begin
 {$endif}
 end;
 
-procedure DBKFileAsMemory(filename:string); overload;
+procedure DBKFileAsMemory(fn:string); overload;
 begin
 {$ifdef windows}
-  filehandle:=CreateFile(pchar(filename),GENERIC_READ	or GENERIC_WRITE,FILE_SHARE_READ or FILE_SHARE_WRITE,nil,OPEN_EXISTING,FILE_FLAG_RANDOM_ACCESS,0);
-  if filehandle=0 then raise exception.create(Format(rsCouldnTBeOpened, [filename]));
+  filehandler.filename:=filename;
+  filehandler.filedata:=tmemorystream.create;
+  filehandler.filedata.LoadFromFile(fn);
   DBKFileAsMemory;
 {$endif}
 end;
@@ -1271,7 +1286,11 @@ begin
 
   UsePhysical:=true;
   Usephysicaldbvm:=false;
-  if usefileasmemory then closehandle(filehandle);
+  if usefileasmemory then
+  begin
+    if filedata<>nil then
+      freeandnil(filedata);
+  end;
   usefileasmemory:=false;
   ReadProcessMemory:=@ReadPhysicalMemory;
   WriteProcessMemoryActual:=@WritePhysicalMemory;
@@ -1301,7 +1320,9 @@ begin
   usephysical:=false;
   Usephysicaldbvm:=false;
 
-  if usefileasmemory then closehandle(filehandle);
+  if filedata<>nil then
+    freeandnil(filedata);
+
   usefileasmemory:=false;
 {$endif}
 end;
@@ -1368,6 +1389,11 @@ end;
 
 procedure UseDBKReadWriteMemory;
 {Changes the redirection of ReadProcessMemory, WriteProcessMemory and VirtualQueryEx to the DBK32 equiv: RPM, WPM and VAE }
+var
+  nthookscript: Tstringlist;
+  func: pointer;
+  old: pointer;
+  olds: string;
 begin
 {$ifdef windows}
   LoadDBK32;
@@ -1385,6 +1411,25 @@ begin
   if pluginhandler<>nil then
     pluginhandler.handlechangedpointers(8);
   {$endif}
+{$endif}
+
+{$ifdef privatebuild}
+  if not assigned(OldNtQueryInformationProcess) then
+  begin
+    nthookscript:=tstringlist.create;
+
+    func:=GetProcAddress(NTDLLHandle,'NtQueryInformationProcess');
+    generateAPIHookScript(nthookscript,IntToHex(ptruint(func),8),IntToHex(ptruint(@dbk_NtQueryInformationProcess),8),inttohex(ptruint(@@oldNtQueryInformationProcess),8),'0',true);
+    autoassemble(nthookscript, false, true, false, true);
+
+    nthookscript.clear;
+
+    func:=GetProcAddress(NTDLLHandle,'NtReadVirtualMemory');
+    generateAPIHookScript(nthookscript,IntToHex(ptruint(func),8),IntToHex(ptruint(@dbk_NtReadVirtualMemory),8),inttohex(ptruint(@@oldNtReadVirtualMemory),8),'0',true);
+    autoassemble(nthookscript, false, true, false, true);
+
+    nthookscript.free;
+  end;
 {$endif}
 
 end;
@@ -1405,6 +1450,8 @@ end;
 procedure UseDBKOpenProcess;
 var
   nthookscript: Tstringlist;
+  zwc: pointer;
+  func: pointer;
 begin
 {$ifdef windows}
   LoadDBK32;
@@ -1412,18 +1459,40 @@ begin
   OpenProcess:=@OP; //gives back the real handle, or if it fails it gives back a value only valid for the dll
   OpenThread:=@OT;
 
+  {$ifdef privatebuild}
   nthookscript:=tstringlist.create;
-  nthookscript.add('NtOpenProcess:');
-  nthookscript.add('jmp '+IntToHex(ptruint(@NOP),8));
 
-  autoassemble(nthookscript, false, true, false, true);
+  if not assigned(oldNtOpenProcess) then
+  begin
+    nthookscript.clear;
+    func:=GetProcAddress(NTDLLHandle,'NtOpenProcess');
+    generateAPIHookScript(nthookscript,IntToHex(ptruint(func),8),IntToHex(ptruint(@NOP),8),IntToHex(ptruint(@@oldNtOpenProcess),8),'0',true);
+    autoassemble(nthookscript, false, true, false, true);
+  end;
+
+
+
+  //nthookscript.add('NtOpenProcess:');
+  //nthookscript.add('jmp '+IntToHex(ptruint(@NOP),8));
+  //autoassemble(nthookscript, false, true, false, true);
+
+
+  if not assigned(oldZwClose) then
+  begin
+    nthookscript.clear;
+    func:=GetProcAddress(NTDLLHandle,'NtClose');
+    generateAPIHookScript(nthookscript,IntToHex(ptruint(func),8),IntToHex(ptruint(@ZC),8),IntToHex(ptruint(@@oldZwClose),8),'0',true);
+    autoassemble(nthookscript, false, true, false, true);
+  end;
+
 
   nthookscript.free;
+  {$endif}  //bypass
 
   {$ifdef cemain}
   pluginhandler.handlechangedpointers(10);
   {$endif}
-{$endif}
+{$endif}  //windows
 end;
 
 function GetLargePageMinimumStub: SIZE_T; stdcall;
@@ -1514,6 +1583,8 @@ initialization
 {$ifndef jni}
   WindowsKernel:=LoadLibrary('Kernel32.dll'); //there is no kernel33.dll
   if WindowsKernel=0 then Raise Exception.create(rsFucked);
+
+  NTDLLHandle:=LoadLibrary('ntdll.dll');
 
 
 

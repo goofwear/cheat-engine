@@ -27,10 +27,27 @@ const BIT_REX_R=4;
 const BIT_REX_X=2;
 const BIT_REX_B=1;
 
+  {$ifdef UNIX}
+const
+  EFLAGS_CF=(1 shl 0);
+  EFLAGS_PF=(1 shl 2);
+  EFLAGS_AF=(1 shl 4);
+  EFLAGS_ZF=(1 shl 6);
+  EFLAGS_SF=(1 shl 7);
+  EFLAGS_TF=(1 shl 8);
+  EFLAGS_IF=(1 shl 9);
+  EFLAGS_DF=(1 shl 10);
+  EFLAGS_OF=(1 shl 11);
+  EFLAGS_NT=(1 shl 14);
+  EFLAGS_RF=(1 shl 16);
+  EFLAGS_VM=(1 shl 17);
+  EFLAGS_AC=(1 shl 18);
+  EFLAGS_ID=(1 shl 21);
+  {$endif}
+
 type
 
   TDisassembleEvent=function(sender: TObject; address: ptruint; var ldd: TLastDisassembleData; var output: string; var description: string): boolean of object;
-
 
 
   TDisassembler=class
@@ -46,14 +63,15 @@ type
 
     fsyntaxhighlighting: boolean;
     fOnDisassembleOverride: TDisassembleEvent;
+    fOnPostDisassemble: TDisassembleEvent;
 
     ArmDisassembler: TArmDisassembler;
 
-    function SIB(memory:TMemory; sibbyte: integer; var last: dword): string;
+    function SIB(memory:TMemory; sibbyte: integer; var last: dword; addresssize: integer=0): string;
     function MODRM(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword): string; overload;
-    function MODRM(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer): string; overload;
+    function MODRM(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer; addresssize: integer=0): string; overload;
 
-    function MODRM2(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer=0): string;
+    function MODRM2(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer=0;addresssize: integer=0): string;
 
     function getReg(bt: byte): byte;
     function getmod(bt: byte): byte;
@@ -119,6 +137,7 @@ type
   published
     property syntaxhighlighting: boolean read fsyntaxhighlighting write setSyntaxHighlighting;
     property OnDisassembleOverride: TDisassembleEvent read fOnDisassembleOverride write fOnDisassembleOverride;
+    property OnPostDisassemble: TDisassembleEvent read fOnPostDisassemble write fOnPostDisassemble;
 end;
 
 
@@ -197,7 +216,9 @@ procedure unregisterGlobalDisassembleOverride(id: integer);
 begin
   if id<length(GlobalDisassembleOverrides) then
   begin
+    {$ifndef unix}
     CleanupLuaCall(TMethod(GlobalDisassembleOverrides[id]));
+    {$endif}
     GlobalDisassembleOverrides[id]:=nil;
   end;
 end;
@@ -569,7 +590,7 @@ begin
 end;
 
 
-function TDisassembler.MODRM2(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer=0): string;
+function TDisassembler.MODRM2(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer=0; addresssize:integer=0): string;
 var dwordptr: ^dword;
     regprefix: char;
     i: integer;
@@ -610,7 +631,7 @@ begin
             4:
             begin
               //has an sib
-              result:=getsegmentoverride(prefix)+'['+sib(memory,modrmbyte+1,last)+'],';
+              result:=getsegmentoverride(prefix)+'['+sib(memory,modrmbyte+1,last, addresssize)+'],';
             end;
 
             5:
@@ -685,7 +706,7 @@ begin
 
               4:
               begin
-                result:=getsegmentoverride(prefix)+'['+sib(memory,modrmbyte+1,last)+'],';
+                result:=getsegmentoverride(prefix)+'['+sib(memory,modrmbyte+1,last, addressSize)+'],';
                 dec(last);
 
                 {
@@ -794,7 +815,7 @@ begin
 
               4:
               begin
-                result:=getsegmentoverride(prefix)+'['+sib(memory,modrmbyte+1,last)+'],';
+                result:=getsegmentoverride(prefix)+'['+sib(memory,modrmbyte+1,last, addresssize)+'],';
                 dec(last,4);
               end;
 
@@ -1019,9 +1040,9 @@ begin
   result:=modrm2(memory,prefix,modrmbyte,inst,last);
 end;
 
-function TDisassembler.MODRM(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer): string;
+function TDisassembler.MODRM(memory:TMemory; prefix: TPrefix; modrmbyte: integer; inst: integer; out last: dword;opperandsize:integer; addressSize: integer=0): string;
 begin
-  result:=modrm2(memory,prefix,modrmbyte,inst,last, opperandsize);
+  result:=modrm2(memory,prefix,modrmbyte,inst,last, opperandsize, addressSize);
   if (length(result)>0) and (result[1]='[') then
   begin
     LastDisassembleData.datasize:=processhandler.pointersize;
@@ -1065,7 +1086,7 @@ begin
   end;
 end;
 
-function TDisassembler.SIB(memory:TMemory; sibbyte: integer; var last: dword): string;
+function TDisassembler.SIB(memory:TMemory; sibbyte: integer; var last: dword; addresssize: integer=0): string;
 var
   dwordptr: ^dword;
   byteptr: ^byte absolute dwordptr;
@@ -1153,7 +1174,7 @@ begin
 
 
 
-  if is64bit then
+  if is64bit and (addresssize<>32) then
   begin
     if indexstring<>'' then indexstring[1]:='r'; //quick replace
 
@@ -1304,8 +1325,8 @@ end;
 function TDisassembler.disassemble(var offset: ptrUint; var description: string): string;
 var memory: TMemory;
     actualread: PtrUInt;
-    startoffset: ptrUint;
-    tempresult: string;
+    startoffset, initialoffset: ptrUint;
+    tempresult, tempdescription: string;
     tempst: string;
     wordptr: ^word;
     dwordptr: ^dword;
@@ -1329,6 +1350,7 @@ var memory: TMemory;
 begin
 
   LastDisassembleData.isfloat:=false;
+  {$ifndef unix}
   if defaultBinutils<>nil then
   begin
     //use this
@@ -1363,7 +1385,7 @@ begin
 
     exit;
   end;
-
+  {$endif}
   if is64bitOverride then
     is64bit:=is64BitOverrideState
   else
@@ -1465,6 +1487,7 @@ begin
   prefix2:=[];
 
   startoffset:=offset;
+  initialoffset:=offset;
   actualread:=0;
   readprocessmemory(processhandle,pointer(offset),@memory,24,actualread);
 
@@ -4414,7 +4437,7 @@ begin
                 $90 : begin
                         description:='set byte if overflow';
                         lastdisassembledata.opcode:='seto';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4422,7 +4445,7 @@ begin
                 $91 : begin
                         description:='set byte if not overfloww';
                         lastdisassembledata.opcode:='setno';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4430,7 +4453,7 @@ begin
                 $92 : begin
                         description:='set byte if below/carry';
                         lastdisassembledata.opcode:='setb';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4438,7 +4461,7 @@ begin
                 $93 : begin
                         description:='set byte if above or equal';
                         lastdisassembledata.opcode:='setae';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4446,7 +4469,7 @@ begin
                 $94 : begin
                         description:='set byte if equal';
                         lastdisassembledata.opcode:='sete';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4454,7 +4477,7 @@ begin
                 $95 : begin
                         description:='set byte if not equal';
                         lastdisassembledata.opcode:='setne';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4462,7 +4485,7 @@ begin
                 $96 : begin
                         description:='set byte if below or equal';
                         lastdisassembledata.opcode:='setbe';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4470,7 +4493,7 @@ begin
                 $97 : begin
                         description:='set byte if above';
                         lastdisassembledata.opcode:='seta';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4478,7 +4501,7 @@ begin
                 $98 : begin
                         description:='set byte if sign';
                         lastdisassembledata.opcode:='sets';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4486,7 +4509,7 @@ begin
                 $99 : begin
                         description:='set byte if not sign';
                         lastdisassembledata.opcode:='setns';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4494,7 +4517,7 @@ begin
                 $9a : begin
                         description:='set byte if parity';
                         lastdisassembledata.opcode:='setp';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4502,7 +4525,7 @@ begin
                 $9b : begin
                         description:='set byte if not parity';
                         lastdisassembledata.opcode:='setnp';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4510,7 +4533,7 @@ begin
                 $9c : begin
                         description:='set byte if less';
                         lastdisassembledata.opcode:='setl';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
 
                         inc(offset,last-1);
                       end;
@@ -4518,7 +4541,7 @@ begin
                 $9d : begin
                         description:='set byte if greater or equal';
                         lastdisassembledata.opcode:='setge';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
                         inc(offset,last-1);
 
                       end;
@@ -4526,7 +4549,7 @@ begin
                 $9e : begin
                         description:='set byte if less or equal';
                         lastdisassembledata.opcode:='setle';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
                         inc(offset,last-1);
 
                       end;
@@ -4534,7 +4557,7 @@ begin
                 $9f : begin
                         description:='set byte if greater';
                         lastdisassembledata.opcode:='setg';
-                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last);
+                        lastdisassembledata.parameters:=modrm(memory,prefix2,2,2,last,8);
                         inc(offset,last-1);
 
 
@@ -4691,7 +4714,7 @@ begin
                                 begin
                                   description:='Load Fence';
                                   lastdisassembledata.opcode:='lfence';
-                                  inc(offset,1);
+                                  inc(offset,2);
                                 end
                                 else
                                 begin
@@ -7828,8 +7851,19 @@ begin
               description:='load effective address';
               lastdisassembledata.opcode:='lea';
               if $66 in prefix2 then
-                lastdisassembledata.parameters:=r16(memory[1])+','+modrm(memory,prefix2,1,1,last) else
-                lastdisassembledata.parameters:=r32(memory[1])+','+modrm(memory,prefix2,1,0,last);
+              begin
+                if processhandler.is64Bit and ($67 in prefix2) then
+                  lastdisassembledata.parameters:=r16(memory[1])+','+modrm(memory,prefix2,1,1,last,0,32)
+                else
+                  lastdisassembledata.parameters:=r16(memory[1])+','+modrm(memory,prefix2,1,1,last,0);
+              end
+              else
+              begin
+                if processhandler.is64Bit and ($67 in prefix2) then
+                  lastdisassembledata.parameters:=r32(memory[1])+','+modrm(memory,prefix2,1,0,last,0,32)
+                else
+                  lastdisassembledata.parameters:=r32(memory[1])+','+modrm(memory,prefix2,1,0,last,0)
+              end;
 
               inc(offset,last-1);
             end;
@@ -11113,6 +11147,21 @@ begin
     result:=result+LastDisassembleData.prefix+LastDisassembleData.opcode;
     result:=result+' ';
     result:=result+LastDisassembleData.parameters;
+  end;
+
+  if assigned(OnPostDisassemble) then
+  begin
+    tempresult:=result;
+    tempdescription:=description;
+
+    if OnPostDisassemble(self, initialoffset, LastDisassembleData, tempresult, tempdescription) then
+    begin
+      result:=tempresult;
+      description:=tempdescription;
+
+      if length(LastDisassembleData.Bytes)>0 then
+        offset:=initialoffset+length(LastDisassembleData.Bytes);
+    end;
   end;
 end;
 

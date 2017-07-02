@@ -113,6 +113,7 @@ type
   { TformAddressChange }
 
   TformAddressChange = class(TForm)
+    cbCodePage: TCheckBox;
     editDescription: TEdit;
     Label12: TLabel;
     Label3: TLabel;
@@ -151,6 +152,8 @@ type
     Timer1: TTimer;
     Timer2: TTimer;
     procedure btnCancelClick(Sender: TObject);
+    procedure cbCodePageChange(Sender: TObject);
+    procedure cbunicodeChange(Sender: TObject);
     procedure cbvarTypeChange(Sender: TObject);
     procedure editAddressChange(Sender: TObject);
     procedure FormActivate(Sender: TObject);
@@ -191,6 +194,8 @@ type
     function getStartbit: integer;
     procedure setUnicode(state: boolean);
     function getUnicode: boolean;
+    procedure setCodePage(state: boolean);
+    function getCodePage: boolean;
     procedure setDescription(s: string);
     function getDescription: string;
     procedure setAddress(var address: string; var offsets: TMemrecOffsetList);
@@ -203,6 +208,7 @@ type
     property length: integer read gLength write sLength;
     property startbit: integer read getStartbit write setStartbit;
     property unicode: boolean read getUnicode write setUnicode;
+    property codepage: boolean read getCodepage write setCodepage;
     property description: string read getDescription write setDescription;
   end;
 
@@ -403,7 +409,9 @@ function TOffsetInfo.parseOffset: boolean;
 var
   e: boolean;
   stack: integer;
+  luavm: Plua_state;
 begin
+  luavm:=GetLuaState;
   finvalidOffset:=true;
   fSpecial:=false;
 
@@ -421,10 +429,10 @@ begin
       foffset:=symhandler.getAddressFromName(fOffsetString, false, e);
       if e then //try lua
       begin
-        luacs.Enter;
+
         stack:=lua_gettop(luavm);
         try
-          if luaL_loadstring(luavm, pchar('memrec, address=... return '+fOffsetString))<>0 then exit(false);
+          if luaL_loadstring(luavm, pchar('local memrec, address=... ; return '+fOffsetString))<>0 then exit(false);
 
           luaclass_newClass(luavm, owner.owner.memoryrecord);
           lua_pushinteger(luavm, fBaseAddress);
@@ -435,7 +443,6 @@ begin
 
         finally
           lua_settop(luavm, stack);
-          luacs.Leave;
         end;
       end;
 
@@ -1022,6 +1029,16 @@ begin
   result:=cbunicode.checked;
 end;
 
+procedure Tformaddresschange.setCodePage(state: boolean);
+begin
+  cbCodePage.checked:=state;
+end;
+
+function Tformaddresschange.getCodePage: boolean;
+begin
+  result:=cbCodePage.checked;
+end;
+
 procedure Tformaddresschange.setStartbit(b: integer);
 begin
   case b of
@@ -1169,6 +1186,7 @@ begin
   pnlExtra.visible:=cbvarType.itemindex in [0,7,8];
   pnlBitinfo.visible:=cbvarType.itemindex = 0;
   cbunicode.visible:=cbvarType.itemindex = 7;
+  cbCodePage.visible:=cbunicode.Visible;
 
   AdjustHeightAndButtons;
 
@@ -1182,6 +1200,18 @@ end;
 procedure TformAddressChange.btnCancelClick(Sender: TObject);
 begin
 
+end;
+
+procedure TformAddressChange.cbCodePageChange(Sender: TObject);
+begin
+  if cbCodePage.checked then
+    cbunicode.checked:=false;
+end;
+
+procedure TformAddressChange.cbunicodeChange(Sender: TObject);
+begin
+  if cbunicode.checked then
+    cbCodePage.checked:=false;
 end;
 
 procedure TformAddressChange.editAddressChange(Sender: TObject);
@@ -1223,6 +1253,9 @@ begin
     btnOk.AnchorSideTop.Control:=cbpointer;
     btnCancel.AnchorSideTop.Control:=cbpointer;
   end;
+
+  autosize:=false;
+  autosize:=true;
 
 end;
 
@@ -1276,6 +1309,7 @@ begin
     vtString:
     begin
       unicode:=rec.Extra.stringData.unicode;
+      codepage:=rec.Extra.stringData.codepage;
       length:=rec.Extra.stringData.length;
     end;
 
@@ -1319,6 +1353,7 @@ begin
     begin
       memoryrecord.Extra.stringData.length:=length;
       memoryrecord.Extra.stringData.unicode:=unicode;
+      memoryrecord.Extra.stringData.codepage:=codepage;
     end;
 
     vtByteArray:
@@ -1504,7 +1539,13 @@ end;
 procedure TformAddressChange.Timer1Timer(Sender: TObject);
 begin
   if cbvarType.DroppedDown then
-    autosize:=false;
+    autosize:=false
+  else
+  begin
+    if autosize=false then
+      autosize:=true;
+  end;
+
 
   timer1.Interval:=1000;
   if visible and cbpointer.checked then

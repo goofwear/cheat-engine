@@ -8,7 +8,7 @@ uses
   windows, LCLIntf, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
   StdCtrls, ExtCtrls, Menus, CEFuncProc, StrUtils, types, ComCtrls, LResources,
   NewKernelHandler, SynEdit, SynHighlighterCpp, SynHighlighterAA, LuaSyntax, disassembler,
-  MainUnit2, Assemblerunit, autoassembler, symbolhandler, SynEditSearch,
+  MainUnit2, Assemblerunit, autoassembler, symbolhandler, SynEditSearch, SynPluginMultiCaret,
   MemoryRecordUnit, tablist, customtypehandler, registry, SynGutterBase, SynEditMarks,
   luahandler, memscan, foundlisthelper, ProcessHandlerUnit, commonTypeDefs;
 
@@ -84,6 +84,7 @@ type
     File1: TMenuItem;
     menuAOBInjection: TMenuItem;
     menuFullInjection: TMenuItem;
+    MenuItem1: TMenuItem;
     mifindNext: TMenuItem;
     miCallLua: TMenuItem;
     miNewWindow: TMenuItem;
@@ -91,6 +92,7 @@ type
     Button1: TButton;
     Load1: TMenuItem;
     Panel2: TPanel;
+    ReplaceDialog1: TReplaceDialog;
     Save1: TMenuItem;
     OpenDialog1: TOpenDialog;
     SaveDialog1: TSaveDialog;
@@ -125,9 +127,12 @@ type
     procedure Load1Click(Sender: TObject);
     procedure menuAOBInjectionClick(Sender: TObject);
     procedure menuFullInjectionClick(Sender: TObject);
+    procedure MenuItem1Click(Sender: TObject);
     procedure mifindNextClick(Sender: TObject);
     procedure miCallLuaClick(Sender: TObject);
     procedure miNewWindowClick(Sender: TObject);
+    procedure ReplaceDialog1Find(Sender: TObject);
+    procedure ReplaceDialog1Replace(Sender: TObject);
     procedure Save1Click(Sender: TObject);
     procedure Exit1Click(Sender: TObject);
     procedure FormClose(Sender: TObject; var Action: TCloseAction);
@@ -166,6 +171,7 @@ type
     CPPHighlighter: TSynCppSyn;
     LuaHighlighter: TSynLuaSyn;
 
+    assemblescreenCaret: TSynPluginMultiCaret;
     assembleSearch: TSynEditSearch;
 
     oldtabindex: integer;
@@ -206,12 +212,13 @@ type
     procedure addTemplate(id: integer);
     procedure removeTemplate(id: integer);
     property CustomTypeScript: boolean read fCustomTypeScript write setCustomTypeScript;
+  published
     property ScriptMode: TScriptMode read fScriptMode write setScriptMode;
   end;
 
 
 procedure Getjumpandoverwrittenbytes(address,addressto: ptrUINT; jumppart,originalcodepart: tstrings);
-procedure generateAPIHookScript(script: tstrings; address: string; addresstogoto: string; addresstostoreneworiginalfunction: string=''; nameextension:string='0');
+procedure generateAPIHookScript(script: tstrings; address: string; addresstogoto: string; addresstostoreneworiginalfunction: string=''; nameextension:string='0'; targetself: boolean=false);
 procedure GenerateCodeInjectionScript(script: tstrings; addressstring: string);
 procedure GenerateAOBInjectionScript(script: TStrings; address: string; symbolname: string);
 procedure GenerateFullInjectionScript(Script: tstrings; address: string);
@@ -226,7 +233,7 @@ implementation
 
 
 uses frmAAEditPrefsUnit,MainUnit,memorybrowserformunit,APIhooktemplatesettingsfrm,
-  Globals, Parsers, MemoryQuery, GnuAssembler, LuaCaller;
+  Globals, Parsers, MemoryQuery, GnuAssembler, LuaCaller, SynEditTypes;
 
 resourcestring
   rsExecuteScript = 'Execute script';
@@ -464,6 +471,7 @@ begin
     begin
       if editscript then
       begin
+
         //check if both scripts are valid before allowing the edit
 
         setlength(aa,1);
@@ -473,8 +481,8 @@ begin
 
 
         try
-          check:=autoassemble(assemblescreen.lines,false,true,true,injectintomyself,aa,registeredsymbols) and
-                 autoassemble(assemblescreen.lines,false,false,true,injectintomyself,aa,registeredsymbols);
+          check:=autoassemble(assemblescreen.lines,false,true,true,injectintomyself,aa,registeredsymbols,memrec) and
+                 autoassemble(assemblescreen.lines,false,false,true,injectintomyself,aa,registeredsymbols,memrec);
 
           if not check then
             errmsg:=format(rsNotAllCodeIsInjectable,['']);
@@ -525,12 +533,21 @@ begin
     savedialog1.FileName:=opendialog1.filename;
     assemblescreen.AfterLoadFromFile;
 
+    SaveDialog1.FileName:=opendialog1.FileName;
+
+    case ScriptMode of
+      smAutoAssembler: caption:=rsAutoAssembler+':'+extractfilename(opendialog1.FileName);
+      smLua: caption:=rsLUAScript+':'+extractfilename(opendialog1.FileName);
+      smGnuAssembler: caption:=rsGNUAScript+':'+extractfilename(opendialog1.FileName);
+    end;
+
   end;
 {$endif}
 end;
 
 procedure TfrmAutoInject.mifindNextClick(Sender: TObject);
 begin
+  finddialog1.Options:=finddialog1.Options+[frFindNext];
   finddialog1.OnFind(finddialog1);
 end;
 
@@ -545,6 +562,68 @@ begin
   f.show;
 end;
 
+procedure TfrmAutoInject.ReplaceDialog1Find(Sender: TObject);
+var so: TSynSearchOptions;
+begin
+  so:=[];
+  if not (frDown in ReplaceDialog1.Options) then
+    so:=so+[ssoBackwards];
+
+  if (frEntireScope in ReplaceDialog1.Options) then
+    so:=so+[ssoEntireScope];
+
+  if (frMatchCase in ReplaceDialog1.Options) then
+    so:=so+[ssoMatchCase];
+
+  if (frPromptOnReplace in ReplaceDialog1.Options) then
+    so:=so+[ssoPrompt];
+
+  if (frFindNext in ReplaceDialog1.Options) then
+    so:=so+[ssoFindContinue];
+
+  if (frWholeWord in ReplaceDialog1.Options) then
+    so:=so+[ssoWholeWord];
+
+ { if assemblescreen.SelAvail then
+    so:=so+[ssoSelectedOnly];   }
+
+  assemblescreen.SearchReplace(ReplaceDialog1.FindText,'',so);
+end;
+
+procedure TfrmAutoInject.ReplaceDialog1Replace(Sender: TObject);
+var so: TSynSearchOptions;
+begin
+  so:=[];
+  if not (frDown in ReplaceDialog1.Options) then
+    so:=so+[ssoBackwards];
+
+  if (frEntireScope in ReplaceDialog1.Options) then
+    so:=so+[ssoEntireScope];
+
+  if (frMatchCase in ReplaceDialog1.Options) then
+    so:=so+[ssoMatchCase];
+
+  if (frPromptOnReplace in ReplaceDialog1.Options) then
+    so:=so+[ssoPrompt];
+
+  if (frReplace in ReplaceDialog1.Options) then
+    so:=so+[ssoReplace];
+
+  if (frReplaceAll in ReplaceDialog1.Options) then
+    so:=so+[ssoReplaceAll];
+
+  if (frFindNext in ReplaceDialog1.Options) then
+    so:=so+[ssoFindContinue];
+
+  if (frWholeWord in ReplaceDialog1.Options) then
+    so:=so+[ssoWholeWord];
+
+  if assemblescreen.SelAvail then
+    so:=so+[ssoSelectedOnly];
+
+  assemblescreen.SearchReplace(ReplaceDialog1.FindText,ReplaceDialog1.ReplaceText,so);
+end;
+
 procedure TfrmAutoInject.Save1Click(Sender: TObject);
 var f: tfilestream;
     s: string;
@@ -557,6 +636,15 @@ begin
     f.Write(s[1],length(assemblescreen.text));
 
     assemblescreen.MarkTextAsSaved;
+
+
+    case ScriptMode of
+      smAutoAssembler: caption:=rsAutoAssembler+':'+extractfilename(savedialog1.FileName);
+      smLua: caption:=rsLUAScript+':'+extractfilename(savedialog1.FileName);
+      smGnuAssembler: caption:=rsGNUAScript+':'+extractfilename(savedialog1.FileName);
+    end;
+
+    OpenDialog1.FileName:=SaveDialog1.FileName;
 
   finally
     f.Free;
@@ -828,12 +916,11 @@ var a,b: integer;
     aa:TCEAllocArray;
     registeredsymbols: TStringlist;
 begin
-{$ifndef standalonetrainerwithassembler}
-  {$ifndef net}
-
   registeredsymbols:=tstringlist.Create;
   registeredsymbols.CaseSensitive:=false;
   registeredsymbols.Duplicates:=dupIgnore;
+
+
 
   try
     setlength(aa,0);
@@ -845,15 +932,11 @@ begin
     begin
       //add a entry with type 255
       mainform.AddAutoAssembleScript(assemblescreen.text);
-
-
     end
     else showmessage(rsFailedToAddToTableNotAllCodeIsInjectable);
   finally
-    registeredsymbols.Free;
+    freeandnil(registeredsymbols);
   end;
-  {$endif}
-  {$endif}
 end;
 
 procedure Getjumpandoverwrittenbytes(address,addressto: ptrUint; jumppart,originalcodepart: tstrings);
@@ -888,7 +971,7 @@ begin
 end;
 
 
-procedure generateAPIHookScript(script: tstrings; address: string; addresstogoto: string; addresstostoreneworiginalfunction: string=''; nameextension:string='0');
+procedure generateAPIHookScript(script: tstrings; address: string; addresstogoto: string; addresstostoreneworiginalfunction: string=''; nameextension:string='0'; targetself: boolean=false);
 var originalcode: array of string;
     originaladdress: array of ptrUint;
     i,j: integer;
@@ -917,275 +1000,301 @@ var originalcode: array of string;
 
     isThumbOrigin: boolean;
     isThumbDestination: boolean;
+
+    oldhandle: thandle;
+    oldsymhandler: TSymHandler;
+    processhandle: THandle;
+    ProcessID: DWORD;
 begin
-  //disassemble the old code
-  d:=TDisassembler.Create;
-  d.showmodules:=false;
-  d.showsymbols:=false;
-
-  setlength(specifier,0);
-  setlength(originalcode,0);
-  setlength(ab,0);
-  specifiernr:=0;
-
-
-  try
-    a:=symhandler.getAddressFromName(address);
-  except
-    on e: exception do
-      raise exception.create(address+':'+e.message);
+  if targetself then
+  begin
+    //get this function to use the symbolhandler that's pointing to CE itself and the self processid/handle
+    oldhandle:=processhandlerunit.ProcessHandle;
+    processid:=getcurrentprocessid;
+    processhandle:=getcurrentprocess;
+    oldsymhandler:=symhandler;
+    symhandler:=selfsymhandler;
+    processhandler.processhandle:=processhandle;
   end;
 
   try
-    b:=symhandler.getAddressFromName(addresstogoto);
-  except
-    on e: exception do
-      raise exception.create(addresstogoto+':'+e.message);
-  end;
 
-  if processhandler.SystemArchitecture=archarm then
-  begin
-    isThumbOrigin:=(a and 1)=1; //assuming that a name is used and not the real address it occurs on
-    isThumbDestination:=(b and 1)=1;
+    //disassemble the old code
+    d:=TDisassembler.Create;
+    d.showmodules:=false;
+    d.showsymbols:=false;
 
-    if isThumbOrigin or isThumbDestination then
-      raise exception.create('The thumb instruction set is not yet suppported');
+    setlength(specifier,0);
+    setlength(originalcode,0);
+    setlength(ab,0);
+    specifiernr:=0;
 
 
-    jumpsize:=8;
-    c:=ptruint(FindFreeBlockForRegion(a,2048));
-    if (c>0) and (abs(integer(c-a))<31*1024*1024) then
-      jumpsize:=4; //can be done with one instruction B <a>
-  end
-  else
-  begin
-    if processhandler.is64bit then
-    begin
-      //check if there is a region I can make use of for a jump trampoline
-      if FindFreeBlockForRegion(a,2048)=nil then
-      begin
-        Assemble('jmp '+inttohex(b,8),a,ab);
-        jumpsize:=length(ab);
-      end
-      else
-        jumpsize:=5;
-    end
-    else
-      jumpsize:=5;
-  end;
-
-
-
-  disablescript:=tstringlist.Create;
-  enablescript:=tstringlist.Create;
-
-  codesize:=0;
-  b:=a;
-  while codesize<jumpsize do
-  begin
-    setlength(originalcode,length(originalcode)+1);
-    setlength(originaladdress,length(originalcode));
-
-    originaladdress[length(originaladdress)-1]:=a;
-    originalcode[length(originalcode)-1]:=d.disassemble(a,x);
-    i:=posex('-',originalcode[length(originalcode)-1]);
-    i:=posex('-',originalcode[length(originalcode)-1],i+1);
-    originalcode[length(originalcode)-1]:=copy(originalcode[length(originalcode)-1],i+2,length(originalcode[length(originalcode)-1]));
-
-    codesize:=a-b;
-  end;
-
-  getmem(originalcodebuffer,codesize);
-  if ReadProcessMemory(processhandle,pointer(b), originalcodebuffer, codesize, br) then
-  begin
-    disablescript.Add(address+':');
-    x:='db';
-
-    for i:=0 to br-1 do
-      x:=x+' '+inttohex(originalcodebuffer[i],2);
-
-    disablescript.Add(x);
-  end;
-
-  freemem(originalcodebuffer);
-  originalcodebuffer:=nil;
-
-
-
-  with enablescript do
-  begin
-    if (processhandler.SystemArchitecture=archx86) and (not processhandler.is64bit) then
-      add('alloc(originalcall'+nameextension+',2048)')
-    else
-    begin
-      add('alloc(originalcall'+nameextension+',2048,'+address+')');
-      add('alloc(jumptrampoline'+nameextension+',64,'+address+') //special jump trampoline in the current region (64-bit)');
-
-      if processhandler.SystemArchitecture=archx86 then
-        add('label(jumptrampoline'+nameextension+'address)');
+    try
+      a:=symhandler.getAddressFromName(address);
+    except
+      on e: exception do
+        raise exception.create(address+':'+e.message);
     end;
 
-    add('label(returnhere'+nameextension+')');
-    add('');
-    if addresstostoreneworiginalfunction<>'' then
-    begin
-      add(addresstostoreneworiginalfunction+':');
-      if processhandler.is64Bit then
-        add('dq originalcall'+nameextension)
-      else
-        add('dd originalcall'+nameextension);
-    end;
-    add('');
-    add('originalcall'+nameextension+':');
-
-    originalcodestart:=enablescript.Count;
-
-    for i:=0 to length(originalcode)-1 do
-    begin
-      {if hasAddress(originalcode[i], tempaddress, nil ) then
-      begin
-        if InRangeX(tempaddress, b,b+codesize) then
-        begin
-          s2:='specifier'+nameextension+inttostr(specifiernr);
-          setlength(specifier,length(specifier)+1);
-          specifier[specifiernr]:=tempaddress;
-
-          Insert(0,'label('+s2+')');
-          if has4ByteHexString(originalcode[i], s) then //should be yes
-          begin
-            s:=copy(s,2,length(s)-1);
-
-            originalcode[i]:=StringReplace(originalcode[i],s,s2,[rfIgnoreCase]);
-          end;
-
-          inc(specifiernr);
-        end;
-      end;  }
-      add(originalcode[i]);
-    end;
-
-    //now find the originalcode line that belongs to the specifier
-    inc(originalcodestart,specifiernr);
-    for i:=0 to length(specifier)-1 do
-    begin
-      for j:=0 to length(originaladdress)-1 do
-      begin
-        if specifier[i]=originaladdress[j] then
-        begin
-          enablescript[originalcodestart+j]:='specifier'+nameextension+inttostr(i)+':'+enablescript[originalcodestart+j]
-        end;
-      end;
-    end;
-
-    i:=0;
-
-    while i<enablescript.count do
-    begin
-      j:=pos(':',enablescript[i]);
-
-      if j>0 then
-      begin
-        s:=enablescript[i];
-        s2:=copy(s,j+1,length(s));
-        delete(i);
-        Insert(i,copy(s,1,j));
-        inc(i);
-        Insert(i,s2);
-      end;
-
-      inc(i);
+    try
+      b:=symhandler.getAddressFromName(addresstogoto);
+    except
+      on e: exception do
+        raise exception.create(addresstogoto+':'+e.message);
     end;
 
     if processhandler.SystemArchitecture=archarm then
-      add('b returnhere'+nameextension)
-    else
-      add('jmp returnhere'+nameextension);
-
-    add('');
-
-    if processhandler.systemarchitecture=archarm then
     begin
-      add('jumptrampoline'+nameextension+':');
-      if isThumbDestination then
-      begin
-        raise exception.create(rsThumbInstructionsAreNotYetImplemented);
-        if isThumbOrigin then
-        begin
-          add('thumb:b '+addresstogoto);
-        end
-        else
-        begin
-          add('bx jumptrampoline_armtothumb+1');
-          add('jumptrampoline_armtothumb:');
-          add('thumb:bl '+addresstogoto);
-          add('thumb:bx jumptrampoline_thumbtoarm');
-          add('jumptrampoline_thumbtoarm');
-          add('bx lr');
-        end;
-      end
-      else
-        add('b '+addresstogoto);
+      isThumbOrigin:=(a and 1)=1; //assuming that a name is used and not the real address it occurs on
+      isThumbDestination:=(b and 1)=1;
 
-    end
-    else
-    if processhandler.is64bit then
-    begin
-      add('jumptrampoline'+nameextension+':');
-      add('jmp [jumptrampoline'+nameextension+'address]');
-      add('jumptrampoline'+nameextension+'address:');
-      add('dq '+addresstogoto);
-      add('');
-    end;
+      if isThumbOrigin or isThumbDestination then
+        raise exception.create('The thumb instruction set is not yet suppported');
 
 
-    add(address+':');
-
-    if processhandler.SystemArchitecture=archarm then
-    begin
-      add('B jumptrampoline'+nameextension);
+      jumpsize:=8;
+      c:=ptruint(FindFreeBlockForRegion(a,2048));
+      if (c>0) and (abs(integer(c-a))<31*1024*1024) then
+        jumpsize:=4; //can be done with one instruction B <a>
     end
     else
     begin
       if processhandler.is64bit then
-        add('jmp jumptrampoline'+nameextension)
-      else
-        add('jmp '+addresstogoto);
-
-      while codesize>jumpsize do
       begin
-        add('nop');
-        dec(codesize);
-      end;
+        //check if there is a region I can make use of for a jump trampoline
+        if FindFreeBlockForRegion(a,2048)=nil then
+        begin
+          Assemble('jmp '+inttohex(b,8),a,ab);
+          jumpsize:=length(ab);
+        end
+        else
+          jumpsize:=5;
+      end
+      else
+        jumpsize:=5;
     end;
 
-    add('returnhere'+nameextension+':');
 
-    add('');
+
+    disablescript:=tstringlist.Create;
+    enablescript:=tstringlist.Create;
+
+    codesize:=0;
+    b:=a;
+    while codesize<jumpsize do
+    begin
+      setlength(originalcode,length(originalcode)+1);
+      setlength(originaladdress,length(originalcode));
+
+      originaladdress[length(originaladdress)-1]:=a;
+      originalcode[length(originalcode)-1]:=d.disassemble(a,x);
+      i:=posex('-',originalcode[length(originalcode)-1]);
+      i:=posex('-',originalcode[length(originalcode)-1],i+1);
+      originalcode[length(originalcode)-1]:=copy(originalcode[length(originalcode)-1],i+2,length(originalcode[length(originalcode)-1]));
+
+      codesize:=a-b;
+    end;
+
+    getmem(originalcodebuffer,codesize);
+    if ReadProcessMemory(processhandle,pointer(b), originalcodebuffer, codesize, br) then
+    begin
+      disablescript.Add(address+':');
+      x:='db';
+
+      for i:=0 to br-1 do
+        x:=x+' '+inttohex(originalcodebuffer[i],2);
+
+      disablescript.Add(x);
+    end;
+
+    freemem(originalcodebuffer);
+    originalcodebuffer:=nil;
+
+
+
+    with enablescript do
+    begin
+      if (processhandler.SystemArchitecture=archx86) and (not processhandler.is64bit) then
+        add('alloc(originalcall'+nameextension+',2048)')
+      else
+      begin
+        add('alloc(originalcall'+nameextension+',2048,'+address+')');
+        add('alloc(jumptrampoline'+nameextension+',64,'+address+') //special jump trampoline in the current region (64-bit)');
+
+        if processhandler.SystemArchitecture=archx86 then
+          add('label(jumptrampoline'+nameextension+'address)');
+      end;
+
+      add('label(returnhere'+nameextension+')');
+      add('');
+      if addresstostoreneworiginalfunction<>'' then
+      begin
+        add(addresstostoreneworiginalfunction+':');
+        if processhandler.is64Bit then
+          add('dq originalcall'+nameextension)
+        else
+          add('dd originalcall'+nameextension);
+      end;
+      add('');
+      add('originalcall'+nameextension+':');
+
+      originalcodestart:=enablescript.Count;
+
+      for i:=0 to length(originalcode)-1 do
+      begin
+        {if hasAddress(originalcode[i], tempaddress, nil ) then
+        begin
+          if InRangeX(tempaddress, b,b+codesize) then
+          begin
+            s2:='specifier'+nameextension+inttostr(specifiernr);
+            setlength(specifier,length(specifier)+1);
+            specifier[specifiernr]:=tempaddress;
+
+            Insert(0,'label('+s2+')');
+            if has4ByteHexString(originalcode[i], s) then //should be yes
+            begin
+              s:=copy(s,2,length(s)-1);
+
+              originalcode[i]:=StringReplace(originalcode[i],s,s2,[rfIgnoreCase]);
+            end;
+
+            inc(specifiernr);
+          end;
+        end;  }
+        add(originalcode[i]);
+      end;
+
+      //now find the originalcode line that belongs to the specifier
+      inc(originalcodestart,specifiernr);
+      for i:=0 to length(specifier)-1 do
+      begin
+        for j:=0 to length(originaladdress)-1 do
+        begin
+          if specifier[i]=originaladdress[j] then
+          begin
+            enablescript[originalcodestart+j]:='specifier'+nameextension+inttostr(i)+':'+enablescript[originalcodestart+j]
+          end;
+        end;
+      end;
+
+      i:=0;
+
+      while i<enablescript.count do
+      begin
+        j:=pos(':',enablescript[i]);
+
+        if j>0 then
+        begin
+          s:=enablescript[i];
+          s2:=copy(s,j+1,length(s));
+          delete(i);
+          Insert(i,copy(s,1,j));
+          inc(i);
+          Insert(i,s2);
+        end;
+
+        inc(i);
+      end;
+
+      if processhandler.SystemArchitecture=archarm then
+        add('b returnhere'+nameextension)
+      else
+        add('jmp returnhere'+nameextension);
+
+      add('');
+
+      if processhandler.systemarchitecture=archarm then
+      begin
+        add('jumptrampoline'+nameextension+':');
+        if isThumbDestination then
+        begin
+          raise exception.create(rsThumbInstructionsAreNotYetImplemented);
+          if isThumbOrigin then
+          begin
+            add('thumb:b '+addresstogoto);
+          end
+          else
+          begin
+            add('bx jumptrampoline_armtothumb+1');
+            add('jumptrampoline_armtothumb:');
+            add('thumb:bl '+addresstogoto);
+            add('thumb:bx jumptrampoline_thumbtoarm');
+            add('jumptrampoline_thumbtoarm');
+            add('bx lr');
+          end;
+        end
+        else
+          add('b '+addresstogoto);
+
+      end
+      else
+      if processhandler.is64bit then
+      begin
+        add('jumptrampoline'+nameextension+':');
+        add('jmp [jumptrampoline'+nameextension+'address]');
+        add('jumptrampoline'+nameextension+'address:');
+        add('dq '+addresstogoto);
+        add('');
+      end;
+
+
+      add(address+':');
+
+      if processhandler.SystemArchitecture=archarm then
+      begin
+        add('B jumptrampoline'+nameextension);
+      end
+      else
+      begin
+        if processhandler.is64bit then
+          add('jmp jumptrampoline'+nameextension)
+        else
+          add('jmp '+addresstogoto);
+
+        while codesize>jumpsize do
+        begin
+          add('nop');
+          dec(codesize);
+        end;
+      end;
+
+      add('returnhere'+nameextension+':');
+
+      add('');
+    end;
+
+
+    getenableanddisablepos(script,enablepos,disablepos);
+
+    if disablepos<>-1 then
+    begin
+      for i:=0 to disablescript.Count-1 do
+        script.Insert(disablepos+i+1,disablescript[i]);
+    end;
+
+    getenableanddisablepos(script,enablepos,disablepos); //idiots putting disable first
+
+    if enablepos<>-1 then
+    begin
+      for i:=0 to enablescript.Count-1 do
+        script.Insert(enablepos+i+1,enablescript[i]);
+    end
+    else
+      script.AddStrings(enablescript);
+
+    disablescript.free;
+    enablescript.free;
+
+    d.free;
+
+  finally
+    if targetself then
+    begin
+      processhandler.processhandle:=oldhandle;
+      symhandler:=oldsymhandler;
+    end;
   end;
-
-
-  getenableanddisablepos(script,enablepos,disablepos);
-
-  if disablepos<>-1 then
-  begin
-    for i:=0 to disablescript.Count-1 do
-      script.Insert(disablepos+i+1,disablescript[i]);
-  end;
-
-  getenableanddisablepos(script,enablepos,disablepos); //idiots putting disable first
-
-  if enablepos<>-1 then
-  begin
-    for i:=0 to enablescript.Count-1 do
-      script.Insert(enablepos+i+1,enablescript[i]);
-  end
-  else
-    script.AddStrings(enablescript);
-
-  disablescript.free;
-  enablescript.free;
-
-  d.free;
 end;
 
 
@@ -1596,11 +1705,15 @@ begin
 
   assemblescreen:=TSynEdit.Create(self);
   assemblescreen.Highlighter:=AAHighlighter;
-  assemblescreen.Options:=SYNEDIT_DEFAULT_OPTIONS - [eoScrollPastEol]+[eoTabIndent];
+  assemblescreen.Options:=SYNEDIT_DEFAULT_OPTIONS - [eoScrollPastEol]+[eoTabIndent]+[eoKeepCaretX];
   assemblescreen.Font.Quality:=fqDefault;
   assemblescreen.WantTabs:=true;
   assemblescreen.TabWidth:=4;
 
+  assemblescreenCaret:=TSynPluginMultiCaret.Create(assemblescreen);
+  assemblescreenCaret.EnableWithColumnSelection:=true;
+  assemblescreenCaret.DefaultMode:=mcmMoveAllCarets;
+  assemblescreenCaret.DefaultColumnSelectMode:=mcmCancelOnCaretMove;
 
   assemblescreen.Gutter.MarksPart.Visible:=false;
   assemblescreen.Gutter.Visible:=true;
@@ -1642,10 +1755,12 @@ begin
         assemblescreen.Gutter.Visible:=reg.ReadBool('Show Gutter');
 
       if reg.valueexists('smart tabs') then
-        if reg.ReadBool('smart tabs') then assemblescreen.Options:=assemblescreen.options+[eoSmartTabs];
+        if reg.ReadBool('smart tabs') then assemblescreen.Options:=assemblescreen.options+[eoSmartTabs]
+                                      else assemblescreen.Options:=assemblescreen.options-[eoSmartTabs];
 
       if reg.valueexists('tabs to spaces') then
-        if reg.ReadBool('tabs to spaces') then assemblescreen.Options:=assemblescreen.options+[eoTabsToSpaces];
+        if reg.ReadBool('tabs to spaces') then assemblescreen.Options:=assemblescreen.options+[eoTabsToSpaces]
+                                          else assemblescreen.Options:=assemblescreen.options-[eoTabsToSpaces];
 
       if reg.valueexists('tab width') then
         assemblescreen.tabwidth:=reg.ReadInteger('tab width');
@@ -1906,6 +2021,7 @@ end;
 
 procedure TfrmAutoInject.Find1Click(Sender: TObject);
 begin
+  finddialog1.Options:=finddialog1.Options-[frFindNext];
   if finddialog1.Execute then
     mifindNext.visible:=true;
 
@@ -1914,9 +2030,11 @@ end;
 procedure TfrmAutoInject.FindDialog1Find(Sender: TObject);
 begin
   //scan the text for the given text
-  assemblescreen.SearchReplace(finddialog1.FindText,'',[]);
+  ReplaceDialog1.Options:=finddialog1.Options;
+  ReplaceDialog1.FindText:=finddialog1.FindText;
+  ReplaceDialog1.OnFind(ReplaceDialog1);
 
-  FindDialog1.close;
+  finddialog1.options:=finddialog1.options+[frFindNext];
 end;
 
 //follow is just a emergency fix since undo is messed up. At least it's better than nothing
@@ -1946,6 +2064,7 @@ begin
 
             reg.WriteBool('smart tabs', eoSmartTabs in assemblescreen.Options);
             reg.WriteBool('tabs to spaces', eoTabsToSpaces in assemblescreen.Options);
+            reg.WriteInteger('tab width', assemblescreen.TabWidth);
           end;
 
         finally
@@ -2236,6 +2355,11 @@ begin
 
   if inputquery(rsCodeInjectTemplate, rsOnWhatAddressDoYouWantTheJump, address) then
     generateFullInjectionScript(assemblescreen.Lines, address);
+end;
+
+procedure TfrmAutoInject.MenuItem1Click(Sender: TObject);
+begin
+  ReplaceDialog1.execute;
 end;
 
 procedure GenerateAOBInjectionScript(script: TStrings; address: string; symbolname: string);

@@ -22,6 +22,7 @@ type
     cbMustEndWithSpecificOffsets: TCheckBox;
     cbMustStartWithSpecificOffsets: TCheckBox;
     cbNoValueCheck: TCheckBox;
+    cbFilterOutAccessible: TCheckBox;
     cbRepeat: TCheckBox;
     cbUseSavedPointermap: TCheckBox;
     cbValueType: TComboBox;
@@ -58,6 +59,7 @@ type
     procedure cbMustEndWithSpecificOffsetsChange(Sender: TObject);
     procedure cbMustStartWithSpecificOffsetsChange(Sender: TObject);
     procedure cbNoValueCheckChange(Sender: TObject);
+    procedure cbFilterOutAccessibleChange(Sender: TObject);
     procedure cbUseSavedPointermapChange(Sender: TObject);
     procedure edtNewBaseChange(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -174,8 +176,11 @@ var
   i: integer;
   s: string;
   r: THostResolver;
+  luavm: PLua_state;
 begin
   //evaluate the given offsets and range
+  luavm:=GetLuaState;
+
   fDelay:=strtoint(edtDelay.Text);
 
 
@@ -362,11 +367,11 @@ begin
     startoffsets.OwnsObjects:=true;
 
     e:=TEdit.Create(self);
-    e.Parent:=panel1;
     e.AnchorSideTop.Control:=cbMustStartWithSpecificOffsets;
     e.AnchorSideTop.Side:=asrBottom;
     e.AnchorSideLeft.Control:=cbMustStartWithSpecificOffsets;
     e.AnchorSideLeft.Side:=asrLeft;
+    e.Parent:=panel1;
     startoffsets.Add(e);
 
     if lblInfoFirstOffset=nil then
@@ -446,6 +451,24 @@ procedure TfrmRescanPointer.cbNoValueCheckChange(Sender: TObject);
 var newstate: boolean;
 begin
   newstate:=not cbNoValueCheck.checked;
+
+  if cbNoValueCheck.checked then cbFilterOutAccessible.checked:=false;
+  if newstate and cbFilterOutAccessible.checked then exit;
+
+  rbFindAddress.enabled:=newstate;
+  rbFindValue.enabled:=newstate;
+  edtAddress.enabled:=newstate;
+  cbValueType.enabled:=newstate;
+end;
+
+procedure TfrmRescanPointer.cbFilterOutAccessibleChange(Sender: TObject);
+var newstate: boolean;
+begin
+  newstate:=not cbFilterOutAccessible.checked;
+
+  if cbFilterOutAccessible.checked then cbNoValueCheck.checked:=false;
+  if newstate and cbNoValueCheck.checked then exit;
+
   rbFindAddress.enabled:=newstate;
   rbFindValue.enabled:=newstate;
   edtAddress.enabled:=newstate;
@@ -538,7 +561,7 @@ var e: Tedit;
   i: integer;
   nextstart: integer;
 begin
-  DoAutoSize;
+  //DoAutoSize;
   {
   e:=nil;
   if cbMustStartWithSpecificOffsets.Checked then
@@ -625,8 +648,8 @@ begin
     cbMustStartWithSpecificOffsets.checked:=false
   else
   begin
+    btnAddStartOffset.AnchorSideTop.Control:=tcontrol(startoffsets[startoffsets.count-2]);
     startoffsets.Delete(startoffsets.count-1);
-    if startoffsets.count>=1 then btnAddStartOffset.AnchorSideTop.Control:=tcontrol(startoffsets[startoffsets.count-1]);
 
     lblInfoFirstOffset.visible:=startoffsets.count>1;
   end;
@@ -644,14 +667,15 @@ begin
   e.AnchorSideTop.Side:=asrBottom;
   e.AnchorSideLeft.Control:=cbMustEndWithSpecificOffsets;
   e.AnchorSideLeft.Side:=asrLeft;
-  e.BorderSpacing.Top:=2;
   e.Parent:=panel1;
+  btnAddEndOffset.AnchorSideTop.Control:=e;
 
   prev:=Tedit(endoffsets[0]);
+  DisableAutoSizing;
   prev.AnchorSideTop.Control:=e;
+  prev.BorderSpacing.Top:=2;
+  EnableAutoSizing;
 
-  btnAddEndOffset.AnchorSideTop.Control:=e;
-  lblInfoLastOffset.AnchorSideTop.Control:=tcontrol(endoffsets[endoffsets.count-1]);
   lblInfoLastOffset.Visible:=true;
   endoffsets.Insert(0,e);
   updatePositions;
@@ -663,18 +687,14 @@ begin
     cbMustEndWithSpecificOffsets.checked:=false
   else
   begin
+    DisableAutoSizing;
+    tcontrol(endoffsets[1]).AnchorSideTop.Control:=cbMustEndWithSpecificOffsets;
+    tcontrol(endoffsets[1]).BorderSpacing.Top:=0;
+    EnableAutoSizing;
+    btnAddEndOffset.AnchorSideTop.Control:=tcontrol(endoffsets[1]);
     endoffsets.Delete(0);
 
-    if endoffsets.count>0 then
-    begin
-      tcontrol(endoffsets[0]).AnchorSideTop.Control:=cbMustEndWithSpecificOffsets;
-      btnAddEndOffset.AnchorSideTop.Control:=tcontrol(endoffsets[0]);
-
-      lblInfoLastOffset.AnchorSideTop.Control:=tcontrol(endoffsets[endoffsets.count-1]);
-
-      lblInfoLastOffset.visible:=endoffsets.count>1;
-    end;
-
+    lblInfoLastOffset.visible:=endoffsets.count>1;
 
     updatePositions;
   end;

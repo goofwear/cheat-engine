@@ -5,9 +5,10 @@ unit ProcessWindowUnit;
 interface
 
 uses
-  jwawindows, windows, LCLIntf, Messages, SysUtils, Classes, Graphics, Controls, Forms, Dialogs,
-  StdCtrls, ExtCtrls, CEFuncProc,CEDebugger, ComCtrls, ImgList,
-  filehandler, Menus, LResources,{tlhelp32,}vmxfunctions, NewKernelHandler, debugHelper{, KIcon}, commonTypeDefs;
+  jwawindows, windows, LCLIntf, Messages, SysUtils, Classes, Graphics, Controls,
+  Forms, Dialogs, StdCtrls, ExtCtrls, CEFuncProc,CEDebugger, ComCtrls, ImgList,
+  filehandler, Menus, LResources,{tlhelp32,}vmxfunctions, NewKernelHandler,
+  debugHelper{, KIcon}, commonTypeDefs, math;
 
 type tprocesslistlong = class(tthread)
 private
@@ -25,29 +26,42 @@ type
 
   TProcessWindow = class(TForm)
     btnNetwork: TButton;
-    btnProcesslist: TButton;
-    btnProcessWatch: TButton;
-    btnWindowList: TButton;
+    Button4: TButton;
     CancelButton: TButton;
+    FontDialog1: TFontDialog;
+    MainMenu1: TMainMenu;
+    MenuItem1: TMenuItem;
+    miCreateProcess: TMenuItem;
+    miOpenFile: TMenuItem;
+    N2: TMenuItem;
+    miChangeFont: TMenuItem;
+    miSkipSystemProcesses: TMenuItem;
+    MenuItem4: TMenuItem;
+    MenuItem5: TMenuItem;
+    N1: TMenuItem;
+    miProcessListLong: TMenuItem;
     miOwnProcessesOnly: TMenuItem;
     OKButton: TButton;
-    Panel3: TPanel;
-    Panel4: TPanel;
-    ProcessList: TListBox;
     Panel1: TPanel;
     OpenDialog1: TOpenDialog;
     OpenDialog2: TOpenDialog;
+    Panel3: TPanel;
+    Panel5: TPanel;
     PopupMenu1: TPopupMenu;
     InputPIDmanually1: TMenuItem;
     Filter1: TMenuItem;
-    Panel2: TPanel;
-    btnOpenFile: TButton;
-    btnCreateThread: TButton;
-    Button4: TButton;
-    btnProcessListLong: TButton;
-    Showinvisiblewindows1: TMenuItem;
+    ProcessList: TListBox;
+    miShowInvisibleItems: TMenuItem;
+    TabControl1: TTabControl;
+    Timer1: TTimer;
     procedure btnNetworkClick(Sender: TObject);
+    procedure Button1Click(Sender: TObject);
     procedure CancelButtonClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
+    procedure MenuItem5Click(Sender: TObject);
+    procedure miProcessListLongClick(Sender: TObject);
+    procedure miChangeFontClick(Sender: TObject);
     procedure miOwnProcessesOnlyClick(Sender: TObject);
     procedure OKButtonClick(Sender: TObject);
     procedure btnProcesslistClick(Sender: TObject);
@@ -66,14 +80,17 @@ type
       Rect: TRect; State: TOwnerDrawState);
     procedure FormShow(Sender: TObject);
     procedure ProcessListKeyPress(Sender: TObject; var Key: char);
-    procedure Showinvisiblewindows1Click(Sender: TObject);
+    procedure miShowInvisibleItemsClick(Sender: TObject);
+    procedure TabControl1Change(Sender: TObject);
+    procedure Timer1Timer(Sender: TObject);
   private
     { Private declarations }
     currentchar: integer;
+    wantedheight: integer;
 
     ffilter: string;
-    currentlist: integer;
     processlistlong: tprocesslistlong;
+    procedure refreshlist;
     procedure setbuttons;
     procedure SetFilter(filter:string);
     property filter:string read ffilter write setfilter;
@@ -86,12 +103,14 @@ type
 
 var
   ProcessWindow: TProcessWindow;
+  commonProcessesList: tstringlist;
 
 implementation
 
 
 uses MainUnit, formsettingsunit, advancedoptionsunit,frmProcessWatcherUnit,
-  memorybrowserformunit, networkConfig, ProcessHandlerUnit, processlist, globals;
+  memorybrowserformunit, networkConfig, ProcessHandlerUnit, processlist, globals,
+  registry, fontSaveLoadRegistry;
 
 resourcestring
   rsIsnTAValidProcessID = '%s isn''t a valid processID';
@@ -109,6 +128,8 @@ resourcestring
   rsScanningClickToStop = 'Scanning (Click to stop)';
   rsProcessListLong = 'Process List(long)';
   rsProcessList = 'Process List';
+
+var errortrace: integer;
 
 procedure TProcessListLong.drawprocesses;
 var i: integer;
@@ -161,16 +182,72 @@ begin
   if processcount>0 then synchronize(drawprocesses);
 end;
 
-procedure TProcessWindow.filterlist;
-var i:integer;
+procedure loadCommonProcessesList;
+var
+  s: string;
+  i,j: integer;
 begin
-  if filter='' then exit;
+  s:=cheatenginedir+'commonProcessesList.txt';
+  if FileExists(s) then //if the list exists
+  begin
+    if commonProcessesList=nil then commonProcessesList:=tstringlist.create;
+    try
+      commonProcessesList.LoadFromFile(s);
+      for i:=commonProcessesList.Count-1 downto 0 do
+      begin
+        j:=pos('#', commonProcessesList[i]);
+        if j>0 then commonProcessesList[i]:=copy(commonProcessesList[i], 1, j-1);
+        commonProcessesList[i]:=uppercase(trim(commonProcessesList[i]));
+        if commonProcessesList[i]='' then commonProcessesList.Delete(i);
+      end;
+    except
+    end;
+  end;
+end;
+
+function isInCommonProcessesList(processname: string): boolean;
+var
+  i:integer;
+begin
+  if commonProcessesList=nil then exit(false);
+  for i:=0 to commonProcessesList.Count-1 do
+    if commonProcessesList[i]=uppercase(copy(processname,10)) then exit(true);
+  result:=false;
+end;
+
+procedure TProcessWindow.filterlist;
+var
+    i:integer;
+    pli: PProcessListInfo;
+    s: string;
+begin
+  if (filter='') and (miSkipSystemProcesses.checked=false) and (commonProcessesList=nil) then exit;
+
+  ffilter:=uppercase(ffilter);
 
   i:=0;
   while i<processlist.Items.Count do
   begin
-    if pos(uppercase(filter),uppercase(processlist.Items[i]))=0 then
-      processlist.Items.Delete(i)
+    pli:=PProcessListInfo(processlist.items.Objects[i]);
+
+    if ((ffilter<>'') and (pos(ffilter,uppercase(processlist.Items[i]))=0)) or ((pli<>nil) and miSkipSystemProcesses.checked and pli^.issystemprocess) or
+       isInCommonProcessesList(processlist.Items[i]) then
+    begin
+      if pli<>nil then
+      begin
+        if pli^.processIcon>0 then
+        begin
+          if pli^.processID<>GetCurrentProcessId then
+            DestroyIcon(pli^.processIcon);
+
+          pli^.processIcon:=0;
+        end;
+
+        freemem(pli);
+      end;
+
+      processlist.Items.Delete(i);
+    end
     else
       inc(i);
   end;
@@ -179,12 +256,7 @@ end;
 procedure TProcesswindow.SetFilter(filter:string);
 begin
   ffilter:=filter;
-  case currentlist of
-    0: btnProcesslist.Click;
-    1: btnWindowList.click;
-  end;
-
-  filterlist;
+  refreshlist;
 end;
 
 procedure TProcessWindow.CancelButtonClick(Sender: TObject);
@@ -195,14 +267,86 @@ begin
   ModalResult:=mrCancel;
 end;
 
+
+procedure TProcessWindow.FormCreate(Sender: TObject);
+var
+  x: array of integer;
+  reg: tregistry;
+begin
+  setlength(x,0);
+  if LoadFormPosition(self,x) then
+  begin
+    autosize:=false;
+    if length(x)>0 then
+      tabcontrol1.TabIndex:=x[0];
+
+    if length(x)>1 then
+      miOwnProcessesOnly.checked:=x[1]<>0;
+
+    if length(x)>2 then
+      miSkipSystemProcesses.checked:=x[2]<>0;
+  end
+  else
+    refreshlist;
+
+  reg:=tregistry.create;
+  try
+    if reg.OpenKey('\Software\Cheat Engine\Process Window\Font',false) then
+      LoadFontFromRegistry(processlist.Font, reg);
+
+
+  finally
+    reg.free;
+  end;
+
+end;
+
+procedure TProcessWindow.FormDestroy(Sender: TObject);
+begin
+  SaveFormPosition(self,[tabcontrol1.TabIndex, ifthen(miOwnProcessesOnly.checked,1,0), ifthen(miSkipSystemProcesses.checked,1,0)]);
+end;
+
+procedure TProcessWindow.MenuItem5Click(Sender: TObject);
+begin
+
+
+end;
+
+procedure TProcessWindow.miProcessListLongClick(Sender: TObject);
+begin
+  btnProcessListLongClick(nil);
+end;
+
+procedure TProcessWindow.miChangeFontClick(Sender: TObject);
+var reg: tregistry;
+begin
+  fontdialog1.font.assign(processlist.font);
+  if fontdialog1.execute then
+  begin
+    //apply settings
+    processlist.font.assign(FontDialog1.Font);
+    //processlist.Canvas.Refresh;
+
+    Timer1Timer(timer1);
+
+    processlist.Repaint;
+
+    reg:=tregistry.create;
+    try
+      if reg.OpenKey('\Software\Cheat Engine\Process Window\Font',true) then
+        SaveFontToRegistry(FontDialog1.Font, reg);
+
+
+    finally
+      reg.free;
+    end;
+  end;
+end;
+
 procedure TProcessWindow.miOwnProcessesOnlyClick(Sender: TObject);
 begin
   ProcessesCurrentUserOnly:=miOwnProcessesOnly.checked;
-
-  if currentlist=1 then
-    btnWindowList.click
-  else
-    btnProcesslist.click;
+  refreshlist;
 end;
 
 procedure TProcessWindow.btnNetworkClick(Sender: TObject);
@@ -211,25 +355,21 @@ begin
     frmNetworkConfig:=tfrmNetworkConfig.create(self);
 
   if frmNetworkConfig.ShowModal=mrok then
-    btnProcesslist.Click;
+  begin
+    if TabControl1.TabIndex=1 then
+      refreshlist
+    else
+      TabControl1.Tabindex:=1;
+  end;
+end;
+
+procedure TProcessWindow.Button1Click(Sender: TObject);
+begin
 
 end;
 
 procedure TProcessWindow.setbuttons;
 begin
-  if formsettings.cbProcesswatcher.Checked then
-  begin
-    btnProcessWatch.Visible:=true;
-    btnProcesslist.Left:=7;
-    btnWindowList.Left:=83;
-    btnProcessWatch.Left:=159;
-  end else
-  begin
-    btnProcessWatch.Visible:=false;
-    btnProcesslist.Left:=44;
-    btnWindowList.Left:=120;
-  end;
-
 
 end;
 
@@ -291,7 +431,11 @@ begin
     ProcessIDString:=copy(ProcessList.Items[Processlist.ItemIndex], 1, pos('-',ProcessList.Items[Processlist.ItemIndex])-1);
 
     PWOP(ProcessIDString);
-    MainForm.ProcessLabel.caption:=ProcessList.Items[Processlist.ItemIndex];
+
+    if tabcontrol1.TabIndex=0 then
+      MainForm.ProcessLabel.caption:=ProcessIDString+'-'+extractfilename(getProcessPathFromProcessID(processid))
+    else
+      MainForm.ProcessLabel.caption:=ProcessList.Items[Processlist.ItemIndex];
     Modalresult:=MROK;
     //ProcessWindow.close;
   end;
@@ -303,66 +447,18 @@ end;
 
 //button1click specific:
 procedure TProcessWindow.btnProcesslistClick(Sender: TObject);
-var oldselection: string;
-    oldselectionIndex: integer;
-    i: integer;
-    found: boolean;
 begin
 
-  Showinvisiblewindows1.visible:=false;
-  oldselectionindex:=processlist.ItemIndex;
-
-  if oldselectionindex<>-1 then
-    oldselection:=processlist.Items[oldselectionIndex];
 
 
-  currentlist:=0;
-
-  getprocesslist(processlist);
-
-
-  if formsettings.cbKernelReadWriteProcessMemory.checked or (dbvm_version>=$ce000004) then //driver is active
-    processlist.Items.Insert(0, '00000000-['+rsPhysicalMemory+']');
-
-  Filterlist;
-
-  if oldselectionindex=-1 then
-    processlist.ItemIndex:=processlist.Items.Count-1 //go to the end
-  else
-  begin
-    i:=processlist.Items.IndexOf(oldselection);
-    if i>=0 then
-      processlist.ItemIndex:=i
-    else
-    begin
-      //strip out the processid part and search for a entry with the appropriate processname (e.g restarted game)
-      oldselection:=copy(oldselection,pos('-',oldselection)+1,length(oldselection));
-
-      found:=false;
-      for i:=0 to processlist.Items.Count-1 do
-        if pos(oldselection, processlist.items[i])>0 then
-        begin
-          processlist.ItemIndex:=i;
-          found:=true;
-
-          break;
-        end;
-
-      if not found then
-        processlist.ItemIndex:=processlist.Items.Count-1;
-    end;
-  end;
 
 end;
 
 procedure TProcessWindow.btnWindowListClick(Sender: TObject);
 begin
-  currentlist:=1;
-  Showinvisiblewindows1.visible:=true;
-  getwindowlist(processlist,Showinvisiblewindows1.Checked);
-  filterlist;
+  //miSkipSystemProcesses.visible:=false;
 
-  processlist.ItemIndex:=processlist.Items.Count-1;  
+
 end;
 
 procedure TProcessWindow.btnCreateThreadClick(Sender: TObject);
@@ -443,8 +539,9 @@ begin
   begin
     DBKFileAsMemory(opendialog2.filename);
     processselected:=true;
-    ProcessHandler.ProcessHandle:=filehandle;
+    ProcessHandler.ProcessHandle:=-1;
     MainForm.ProcessLabel.caption:=extractfilename(opendialog2.FileName);
+    MainForm.miSaveFile.visible:=true;
     ProcessHandler.processid:=$FFFFFFFF;
 
     modalresult:=mrok;
@@ -487,7 +584,7 @@ end;
 procedure TProcessWindow.FormResize(Sender: TObject);
 begin
 //reset the button positions
-  setbuttons;
+//  setbuttons;
 end;
 
 procedure TProcessWindow.btnProcessListLongClick(Sender: TObject);
@@ -495,14 +592,14 @@ begin
   if processlistlong=nil then
   begin
     processlist.Clear;
-    btnprocesslistlong.Caption:=rsScanningClickToStop;
+    miProcessListLong.Caption:=rsScanningClickToStop;
     processlistlong:=tprocesslistlong.create(true);
     processlistlong.processlist:=processlist;
     processlistlong.start;
   end
   else
   begin
-    btnprocesslistlong.Caption:=rsProcessListLong;
+    miProcessListLong.Caption:=rsProcessListLong;
     processlistlong.terminate;
     processlistlong.WaitFor;
     processlistlong.Free;
@@ -519,23 +616,31 @@ begin
     processlistlong.WaitFor;
     processlistlong.Free;
     processlistlong:=nil;
-    btnprocesslistlong.Caption:=rsProcessListLong;
+    miProcessListLong.Caption:=rsProcessListLong;
   end;
 end;
 
 procedure TProcessWindow.PopupMenu1Popup(Sender: TObject);
 begin
-  miOwnProcessesOnly.checked:=ProcessesCurrentUserOnly;
+
 end;
 
 procedure TProcessWindow.ProcessListDrawItem(Control: TWinControl;
   Index: Integer; Rect: TRect; State: TOwnerDrawState);
+var i: integer;
 begin
+  wantedheight:=ProcessList.canvas.TextHeight('QqJjWwSs')+3;
+  {i:=ProcessList.canvas.TextHeight('QqJjWwSs')+3;
+  if processlist.itemheight<i then ProcessList.ItemHeight:=i;   }
 
   processlist.Canvas.FillRect(rect);
+  {
+  i:=ProcessList.canvas.TextHeight('QqJjWwSs')+3;
+  if processlist.itemheight<i then ProcessList.ItemHeight:=i;}
 
 
-  processlist.Canvas.TextOut(rect.Left+rect.Bottom-rect.Top,rect.Top,processlist.Items[index]);
+
+  processlist.Canvas.TextOut(rect.Left+rect.Bottom-rect.Top+3,rect.Top,processlist.Items[index]);
 
   if (processlist.Items.Objects[index]<>nil) and (PProcessListInfo(processlist.Items.Objects[index])^.processIcon>0) then
     DrawIconEx(processlist.Canvas.Handle, rect.left, rect.Top, PProcessListInfo(processlist.Items.Objects[index])^.processIcon, rect.Bottom-rect.Top,rect.Bottom-rect.Top,0,0,DI_NORMAL);
@@ -543,50 +648,33 @@ begin
 end;
 
 procedure TProcessWindow.FormShow(Sender: TObject);
-var i: integer;
 begin
-  ProcessList.ItemHeight:=canvas.TextHeight('QqJjWwSs')+2;
+  loadCommonProcessesList;
+  errortrace:=100;
+  try
+    errortrace:=101;
+    processlist.canvas.Refresh;
 
-  currentchar:=1;
-  btnProcesslist.click;
+    errortrace:=102;
+    ProcessList.ItemHeight:=max(processlist.canvas.TextHeight('QqJjWwSs')+3, canvas.TextHeight('QqJjWwSs')+3);
+    errortrace:=103;
+    currentchar:=1;
+    errortrace:=104;
+    refreshlist;
+    errortrace:=105;
 
-  setbuttons;
+    if autosize then
+    begin
+      autosize:=false;
+      if height<350 then
+        height:=350; //initial show
+    end;
+    errortrace:=106;
+  except
+    on e:exception do
+      raise exception.create('FormShow exception ('+e.message+') at section '+inttostr(errortrace));
 
-  i:=max(btnProcesslist.width, btnWindowList.width);
-
-  if btnProcessWatch.Visible then
-  begin
-    i:=max(i, btnProcessWatch.Width);
-    btnProcesslist.width:=i;
-    btnWindowList.width:=i;
-    btnProcessWatch.width:=i;
-  end
-  else
-  begin
-    btnProcesslist.width:=i;
-    btnWindowList.width:=i;
-    btnProcesslist.BorderSpacing.Left:=40;
-    btnWindowList.BorderSpacing.Right:=40;
   end;
-
-  autosize:=false;
-
-  panel3.autosize:=false;
-  i:=max(panel3.width, button4.width);
-  panel3.width:=i;
-  cancelbutton.AnchorSideLeft.Control:=nil;
-  cancelbutton.AnchorSideRight.Control:=panel3;
-  cancelbutton.AnchorSideRight.side:=asrRight;
-  cancelbutton.Anchors:=[akTop, akRight];
-
-  if btnProcessWatch.Visible then
-    i:=max(i, btnProcesslist.width+btnWindowList.width+btnProcessWatch.Width+5)
-  else
-    i:=max(i, btnProcesslist.width+btnWindowList.width+3);
-
-
-  clientwidth:=i+40;
-  clientheight:=trunc(panel2.height*1.8);
 end;
 
 procedure TProcessWindow.ProcessListKeyPress(Sender: TObject; var Key: char);
@@ -603,14 +691,112 @@ begin
     caption:=rsProcessList;
 end;
 
-procedure TProcessWindow.Showinvisiblewindows1Click(Sender: TObject);
+procedure TProcessWindow.RefreshList;
+var
+    i: integer;
+    oldselectionindex: integer;
+    oldselection: string;
+    found: boolean;
+
 begin
-  if Showinvisiblewindows1.Visible then
-  begin
-    Showinvisiblewindows1.Checked:=not Showinvisiblewindows1.Checked;
-    btnWindowList.Click;
+  processlist.Items.BeginUpdate;
+  try
+    oldselectionindex:=processlist.ItemIndex;
+
+    if oldselectionindex<>-1 then
+      oldselection:=processlist.Items[oldselectionIndex];
+
+    case tabcontrol1.TabIndex of
+      0:
+      begin
+        getwindowlist2(processlist.Items);
+        miSkipSystemProcesses.enabled:=true;
+      end;
+
+      1:
+      begin
+        getprocesslist(processlist.items);
+
+        miSkipSystemProcesses.enabled:=true;
+      end;
+
+      2:
+      begin
+        GetWindowList(processlist.Items, miShowInvisibleItems.Checked);
+        miSkipSystemProcesses.enabled:=false;
+        processlist.ItemIndex:=processlist.Items.Count-1;
+      end;
+    end;
+
+    filterlist;
+
+    if oldselectionindex=-1 then
+    begin
+      processlist.ItemIndex:=processlist.Items.Count-1; //go to the end
+    end
+    else
+    begin
+      i:=processlist.Items.IndexOf(oldselection);
+      if i>=0 then
+      begin
+        processlist.ItemIndex:=i;
+      end
+      else
+      begin
+        //strip out the processid part and search for a entry with the appropriate processname (e.g restarted game)
+        oldselection:=copy(oldselection,pos('-',oldselection)+1,length(oldselection));
+
+        found:=false;
+        for i:=0 to processlist.Items.Count-1 do
+          if pos(oldselection, processlist.items[i])>0 then
+          begin
+            processlist.ItemIndex:=i;
+            found:=true;
+
+            break;
+          end;
+
+        if not found then
+          processlist.ItemIndex:=processlist.Items.Count-1;
+      end;
+    end;
+
+
+    if formsettings.cbKernelReadWriteProcessMemory.checked or (dbvm_version>=$ce000004) then //driver is active
+    begin
+      processlist.Items.Insert(0, '00000000-['+rsPhysicalMemory+']');
+    end;
+
+  finally
+    processlist.items.EndUpdate;
   end;
 end;
+
+procedure TProcessWindow.miShowInvisibleItemsClick(Sender: TObject);
+begin
+  refreshList;
+end;
+
+procedure TProcessWindow.TabControl1Change(Sender: TObject);
+begin
+  refreshList;
+end;
+
+procedure TProcessWindow.Timer1Timer(Sender: TObject);
+begin
+  try
+    if processlist.itemheight<>wantedheight then
+    begin
+      ProcessList.ItemHeight:=wantedheight;
+      processlist.canvas.Refresh;
+      processlist.Repaint;
+    end;
+  except
+    timer1.enabled:=false;
+    showmessage('timer issue');
+  end;
+end;
+
 
 initialization
   {$i ProcessWindowUnit.lrs}

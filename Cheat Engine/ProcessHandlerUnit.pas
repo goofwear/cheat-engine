@@ -30,7 +30,7 @@ type TProcessHandler=class
     procedure Open;
     function isNetwork: boolean;  //perhaps name it isLinux ?
     procedure overridePointerSize(newsize: integer);
-    property is64Bit: boolean read fIs64Bit;
+    property is64Bit: boolean read fIs64Bit write setIs64bit;
     property pointersize: integer read fPointersize;
     property processhandle: THandle read fProcessHandle write setProcessHandle;
     property SystemArchitecture: TSystemArchitecture read fSystemArchitecture;
@@ -115,6 +115,8 @@ begin
   begin
     fSystemArchitecture:=archX86;
     setIs64Bit(newkernelhandler.Is64BitProcess(fProcessHandle));
+
+
   end;
 
   {$ifdef ARMTEST}
@@ -124,9 +126,9 @@ begin
 
   if processhandle<>0 then
   begin
-    OutputDebugString('setProcessHandle: Calling open');
+    //OutputDebugString('setProcessHandle: Calling open');
     open;
-    OutputDebugString('After open');
+    //OutputDebugString('After open');
   end;
 
 

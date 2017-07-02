@@ -27,14 +27,15 @@ uses sysutils, unixporthelper, customtypehandler, commonTypeDefs, classes,
 {$endif}
 
 
-type TCheckRoutine=function(newvalue,oldvalue: pointer):boolean of object;
-type TMultiAOBCheckRoutine=function(newvalue: pointer; mabsindex: integer):boolean of object;
-type TStoreResultRoutine=procedure(address: ptruint; oldvalue: pointer) of object;
-type TFlushRoutine=procedure of object;
+type
+  TMemScanGuiUpdateRoutine=procedure(sender: TObject; totaladdressestoscan: qword; currentlyscanned: qword; foundcount: qword) of object;
+  TCheckRoutine=function(newvalue,oldvalue: pointer):boolean of object;
+  TMultiAOBCheckRoutine=function(newvalue: pointer; mabsindex: integer):boolean of object;
+  TStoreResultRoutine=procedure(address: ptruint; oldvalue: pointer) of object;
+  TFlushRoutine=procedure of object;
 
-type Tscanregionpreference=(scanDontCare, scanExclude, scanInclude);
-
-type TAddresses=array of PtrUInt;
+  Tscanregionpreference=(scanDontCare, scanExclude, scanInclude);
+  TAddresses=array of PtrUInt;
 
 
 type
@@ -85,6 +86,7 @@ type
     function testWideString(buf: PWideChar; ts: pwidechar): boolean;
 
   public
+    floatscanWithoutExponents: boolean;
     constructor create(parameters: string; scanner: TScanner);
     function compareblock(newvalue,oldvalue: pointer): boolean; //Check if the values are at their specific offsets
     function compareblock_outoforder(newvalue,oldvalue: pointer): boolean; //Scan the blocks for the values
@@ -519,8 +521,8 @@ type
     errorstring: string;
 
     //messages
-    notifywindow: thandle;
-    notifymessage: integer;
+    //notifywindow: thandle;
+    //notifymessage: integer;
 
     //OnlyOne vars
     OnlyOne: boolean;
@@ -553,8 +555,8 @@ type
     memRegionPos: integer;
 
     progressbar: TCustomProgressBar;
-    notifywindow: thandle;
-    notifymessage: integer;
+    //notifywindow: thandle;
+   // notifymessage: integer;
 
     currentVariableType: TVariableType;
     currentCustomType: TCustomType;
@@ -585,6 +587,8 @@ type
     fLastScanValue: String;
     fscanresultfolder: string; //the location where all the scanfiles will be stored
 
+    fCodePage: boolean;
+
     fnextscanCount: integer;
 
 
@@ -596,12 +600,17 @@ type
     fInverseScan: boolean;
     fGUIScanner: boolean;
 
+
+
     procedure DeleteScanfolder;
     procedure createScanfolder;
     function DeleteFolder(dir: string) : boolean;
   protected
     fOnScanDone: TNotifyEvent;
+    fOnInitialScanDone: TNotifyEvent;
+    fOnGuiUpdate: TMemScanGuiUpdateRoutine;
     procedure ScanDone; virtual; //called by the scancontroller
+    procedure InitialScanDone; virtual;
   public
 
 
@@ -612,7 +621,8 @@ type
 
     attachedFoundlist: TObject;
     procedure parseProtectionflags(protectionflags: string);
-    function GetProgress(var totaladdressestoscan:qword; var currentlyscanned: qword):integer;
+    function GetProgress(var totaladdressestoscan:qword; var currentlyscanned: qword; var resultsfound: qword):integer;
+    function hasError: boolean;
     function GetErrorString: string;
     function GetFoundCount: uint64;
     function Getbinarysize: int64; //returns the number of bits of the current type
@@ -626,7 +636,7 @@ type
     function waittilldone(timeout: dword=INFINITE): boolean;
     function waittillreallydone(timeout: dword=INFINITE): boolean;
 
-    procedure setScanDoneCallback(notifywindow: thandle; notifymessage: integer);
+//    procedure setScanDoneCallback(notifywindow: thandle; notifymessage: integer);
 
     function canUndo: boolean;
     procedure undoLastScan;
@@ -637,6 +647,8 @@ type
     procedure saveresults(resultname: string);
     function getsavedresults(r: tstrings): integer;
 
+    function canWriteResults: boolean;
+
 
     property nextscanCount: integer read fnextscanCount;
   published
@@ -646,13 +658,15 @@ type
     property OnlyOne: boolean read fOnlyOne write fOnlyOne;
     property VarType: TVariableType read currentVariableType;
     property CustomType: TCustomType read currentCustomType;
+    property codePage: boolean read fCodePage write fCodePage;
     property isUnicode: boolean read stringUnicode;
     property isHexadecimal: boolean read fisHexadecimal; //gui
     property LastScanValue: string read fLastScanValue;
     property LastScanType: TScanType read FLastScanType;
     property ScanresultFolder: string read fScanResultFolder; //read only, it's configured during creation
     property OnScanDone: TNotifyEvent read fOnScanDone write fOnScanDone;
-
+    property OnInitialScanDone: TNotifyEvent read fOnInitialScanDone write fOnInitialScanDone;
+    property OnGuiUpdate: TMemscanGuiUpdateRoutine read fOnGuiUpdate write fOnGuiUpdate;
   end;
 
 
@@ -682,7 +696,7 @@ resourcestring
   rsDiskWriteError = 'Disk write error:%s';
   rsNoReadableMemoryFound = 'No readable memory found';
   rsFailureAllocatingMemoryForCopyTriedAllocatingKB = 'Failure allocating memory for copy. Tried allocating %s KB';
-  rsErrorWhenWhileLoadingResult = 'Error when while loading result';
+  rsErrorWhenWhileLoadingResult = 'Error while loading result';
   rsNotEnoughDiskspaceForTheAddressFile = 'Not enough diskspace for the address file';
   rsNotEnoughDiskspaceForTheMemoryFile = 'Not enough diskspace for the memory file';
   rsDiskWriteError2 = 'Disk Write Error:%s';
@@ -1033,11 +1047,14 @@ begin
 
   while i<blocksize-3 do
   begin
-    if (psingle(current)^>minf) and (psingle(current)^<maxf) then
+    if ((psingle(current)^>minf) and (psingle(current)^<maxf)) then
     begin
-      startoffset:=i+1;
-      result:=true;
-      exit;
+      if not (floatscanWithoutExponents and (pdword(current)^>0) and (abs(127-(pdword(current)^ shr 23) and $ff)>10)) then
+      begin
+        startoffset:=i+1;
+        result:=true;
+        exit;
+      end;
     end;
 
     inc(current,align);
@@ -1064,9 +1081,12 @@ begin
   begin
     if (pdouble(current)^>minf) and (pdouble(current)^<maxf) then
     begin
-      startoffset:=i+1;
-      result:=true;
-      exit;
+      if not (floatscanWithoutExponents and (pqword(current)^>0) and (abs(integer(1023-(pqword(current)^ shr 52) and $7ff))>10)) then
+      begin
+        startoffset:=i+1;
+        result:=true;
+        exit;
+      end;
     end;
 
     inc(current,align);
@@ -1129,9 +1149,12 @@ begin
     f:=ct.ConvertDataToFloat(current, fscanner.currentAddress);
     if (f>minf) and (f<maxf) then
     begin
-      startoffset:=i+1;
-      result:=true;
-      exit;
+      if not (floatscanWithoutExponents and (pdword(@f)^>0) and (abs(127-(pdword(@f)^ shr 23) and $ff)>10)) then
+      begin
+        startoffset:=i+1;
+        result:=true;
+        exit;
+      end;
     end;
 
     inc(current,align);
@@ -1330,12 +1353,12 @@ function TScanner.AllExact(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteExact(newvalue,oldvalue); //oldvalue=nil, but give it anyhow
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordExact(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordExact(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordExact(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleExact(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleExact(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteExact(newvalue,oldvalue) xor inverseScan); //oldvalue=nil, but give it anyhow
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordExact(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordExact(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordExact(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleExact(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleExact(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1346,9 +1369,9 @@ begin
       customtype:=tcustomtype(customTypes[j]);
 
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatExact(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatExact(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomExact(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomExact(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1375,12 +1398,12 @@ function TScanner.AllBetween(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteBetween(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordBetween(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordBetween(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordBetween(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleBetween(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleBetween(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteBetween(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordBetween(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordBetween(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordBetween(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleBetween(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleBetween(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1391,9 +1414,9 @@ begin
       customtype:=tcustomtype(customTypes[j]);
 
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatBetween(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatBetween(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomBetween(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomBetween(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1419,12 +1442,12 @@ function TScanner.AllBetweenPercentage(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
     j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteBetweenPercentage(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordBetweenPercentage(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordBetweenPercentage(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordBetweenPercentage(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleBetweenPercentage(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleBetweenPercentage(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteBetweenPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordBetweenPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordBetweenPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordBetweenPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleBetweenPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleBetweenPercentage(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1435,9 +1458,9 @@ begin
       customtype:=tcustomtype(customTypes[j]);
 
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatBetweenPercentage(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatBetweenPercentage(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomBetweenPercentage(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomBetweenPercentage(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1463,12 +1486,12 @@ function TScanner.AllBiggerThan(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
       j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteBiggerThan(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordBiggerThan(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordBiggerThan(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordBiggerThan(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleBiggerThan(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleBiggerThan(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteBiggerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordBiggerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordBiggerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordBiggerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleBiggerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleBiggerThan(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1478,9 +1501,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatBiggerThan(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatBiggerThan(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomBiggerThan(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomBiggerThan(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1506,12 +1529,12 @@ function TScanner.AllSmallerThan(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
         j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteSmallerThan(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordSmallerThan(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordSmallerThan(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordSmallerThan(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleSmallerThan(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleSmallerThan(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteSmallerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordSmallerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordSmallerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordSmallerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleSmallerThan(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleSmallerThan(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1521,9 +1544,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatSmallerThan(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatSmallerThan(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomSmallerThan(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomSmallerThan(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1549,12 +1572,12 @@ function TScanner.AllIncreasedValue(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteIncreasedValue(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordIncreasedValue(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordIncreasedValue(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordIncreasedValue(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleIncreasedValue(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleIncreasedValue(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteIncreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordIncreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordIncreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordIncreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleIncreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleIncreasedValue(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1564,9 +1587,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatIncreasedValue(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatIncreasedValue(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomIncreasedValue(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomIncreasedValue(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1592,12 +1615,12 @@ function TScanner.AllIncreasedValueBy(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteIncreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordIncreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordIncreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordIncreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleIncreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleIncreasedValueBy(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteIncreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordIncreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordIncreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordIncreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleIncreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleIncreasedValueBy(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1607,9 +1630,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatIncreasedValueBy(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatIncreasedValueBy(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomIncreasedValueBy(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomIncreasedValueBy(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1635,12 +1658,12 @@ function TScanner.AllIncreasedValueByPercentage(newvalue,oldvalue: pointer):bool
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteIncreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordIncreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordIncreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordIncreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleIncreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleIncreasedValueByPercentage(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1650,9 +1673,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatIncreasedValueByPercentage(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomIncreasedValueByPercentage(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomIncreasedValueByPercentage(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1679,12 +1702,12 @@ function TScanner.AllDecreasedValue(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteDecreasedValue(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordDecreasedValue(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordDecreasedValue(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordDecreasedValue(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleDecreasedValue(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleDecreasedValue(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteDecreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordDecreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordDecreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordDecreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleDecreasedValue(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleDecreasedValue(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1694,9 +1717,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatDecreasedValue(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatDecreasedValue(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomDecreasedValue(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomDecreasedValue(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1722,12 +1745,12 @@ function TScanner.AllDecreasedValueBy(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteDecreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordDecreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordDecreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordDecreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleDecreasedValueBy(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleDecreasedValueBy(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteDecreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordDecreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordDecreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordDecreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleDecreasedValueBy(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleDecreasedValueBy(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1737,9 +1760,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatDecreasedValueBy(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatDecreasedValueBy(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomDecreasedValueBy(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomDecreasedValueBy(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1765,12 +1788,12 @@ function TScanner.AllDecreasedValueByPercentage(newvalue,oldvalue: pointer):bool
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteDecreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordDecreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordDecreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordDecreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleDecreasedValueByPercentage(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleDecreasedValueByPercentage(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1780,9 +1803,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatDecreasedValueByPercentage(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomDecreasedValueByPercentage(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomDecreasedValueByPercentage(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1808,12 +1831,12 @@ function TScanner.Allchanged(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteChanged(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordChanged(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordChanged(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordChanged(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleChanged(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleChanged(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteChanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordChanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordChanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordChanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleChanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleChanged(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1823,9 +1846,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatChanged(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatChanged(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomChanged(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomChanged(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -1851,12 +1874,12 @@ function TScanner.AllUnchanged(newvalue,oldvalue: pointer):boolean;
 var i: TVariableType;
   j: integer;
 begin
-  typesmatch[vtByte]:=typesmatch[vtByte] and ByteUnchanged(newvalue,oldvalue);
-  typesmatch[vtWord]:=typesmatch[vtWord] and WordUnchanged(newvalue,oldvalue);
-  typesmatch[vtDword]:=typesmatch[vtDword] and DwordUnchanged(newvalue,oldvalue);
-  typesmatch[vtQword]:=typesmatch[vtQword] and qwordUnchanged(newvalue,oldvalue);
-  typesmatch[vtSingle]:=typesmatch[vtSingle] and singleUnchanged(newvalue,oldvalue);
-  typesmatch[vtDouble]:=typesmatch[vtDouble] and doubleUnchanged(newvalue,oldvalue);
+  typesmatch[vtByte]:=typesmatch[vtByte] and (ByteUnchanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtWord]:=typesmatch[vtWord] and (WordUnchanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDword]:=typesmatch[vtDword] and (DwordUnchanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtQword]:=typesmatch[vtQword] and (qwordUnchanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtSingle]:=typesmatch[vtSingle] and (singleUnchanged(newvalue,oldvalue) xor inverseScan);
+  typesmatch[vtDouble]:=typesmatch[vtDouble] and (doubleUnchanged(newvalue,oldvalue) xor inverseScan);
 
   {$ifdef customtypeimplemented}
   if allCustom then
@@ -1866,9 +1889,9 @@ begin
     begin
       customtype:=tcustomtype(customTypes[j]);
       if customtype.scriptUsesFloat then
-        customtypesmatch[j]:=customtypesmatch[j] and CustomFloatUnchanged(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomFloatUnchanged(newvalue,oldvalue) xor inverseScan)
       else
-        customtypesmatch[j]:=customtypesmatch[j] and CustomUnchanged(newvalue,oldvalue)
+        customtypesmatch[j]:=customtypesmatch[j] and (CustomUnchanged(newvalue,oldvalue) xor inverseScan)
     end;
   end;
   {$ENDIF}
@@ -2830,7 +2853,6 @@ begin
   entry.address:=address;
 
 
-
   for i:=0 to groupdata.groupdatalength-1 do
     entry.offsets[i]:=groupdata.groupdata[i].offset;
 
@@ -2857,12 +2879,18 @@ begin
         //filter out NAN and INF
         if isnan(psingle(oldvalue)^) or IsInfinite(psingle(oldvalue)^) then
           continue; //skip, don't save
+
+        if floatscanWithoutExponents and (pdword(oldvalue)^>0) and (abs(127-(pdword(oldvalue)^ shr 23) and $ff)>10) then
+          continue;
       end;
 
       if (i=vtdouble) then
       begin
         if isnan(pdouble(oldvalue)^) or IsInfinite(pdouble(oldvalue)^) then
           continue; //skip, don't save
+
+        if floatscanWithoutExponents and (pqword(oldvalue)^>0) and (abs(integer(1023-(pqword(oldvalue)^ shr 52) and $7ff))>10) then
+          continue;
       end;
 
       //using the bitaddressarray since it holds a address and a value big enough to hold all types
@@ -2953,7 +2981,9 @@ end;
 //==================Tscanfilewriter=================//
 
 procedure Tscanfilewriter.execute;
-var part: integer;
+var
+  part: integer;
+  wr: twaitresult;
 begin
   part:=0;
   if writeError then exit;
@@ -2962,12 +2992,12 @@ begin
 
     
     repeat
-      dataavailable.WaitFor(infinite);
+      repeat
+        wr:=dataavailable.WaitFor(1000);
+        if terminated or writeError or (wr in [wrAbandoned, wrError]) then exit;
+      until wr=wrSignaled;
+
       try
-
-        if terminated then exit;
-
-
         scancontroller.resultsaveCS.Enter;
         try
           part:=1;
@@ -3010,8 +3040,14 @@ procedure Tscanfilewriter.writeresults(addressbuffer,memorybuffer: pointer; addr
 check if the thread is currently saving
 If yes, wait, if not, start the thread, give it the buffer, and continue
 }
+var wr: TWaitResult;
 begin
-  datawritten.WaitFor(infinite); //only gets set when the thread is done writing
+
+  repeat
+    wr:=datawritten.WaitFor(1000); //only gets set when the thread is done writing
+    if terminated or writeError or (wr in [wrAbandoned, wrError]) then exit;
+  until wr=wrSignaled;
+
   //got past the wait, so it's done writing, so it has no need for the current variables
   self.addressbuffer:=addressbuffer;
   self.memorybuffer:=memorybuffer;
@@ -3024,9 +3060,17 @@ begin
 end;
 
 procedure Tscanfilewriter.flush;
+var wr: TWaitResult;
 begin
   if writeerror then exit;
-  datawritten.WaitFor(infinite);
+
+  repeat
+    wr:=datawritten.WaitFor(1000);
+    if terminated or writeError or (wr in [wrAbandoned, wrError]) then exit;
+
+    if writeError then exit;
+  until wr=wrSignaled;
+
   datawritten.SetEvent;
 end;
 
@@ -3175,7 +3219,7 @@ begin
           for j:=0 to customtypecount-1 do customtypesmatch[j]:=true;
         end;
 
-        if checkroutine(p,nil) xor inv then //found one
+        if checkroutine(p,nil) then //found one
           StoreResultRoutine(base+ptruint(p)-ptruint(buffer),p);
 
         inc(p,stepsize);
@@ -3307,7 +3351,7 @@ begin
         end;
 
 
-        if checkroutine(p,savedscanhandler.getpointertoaddress(base+ptruint(p)-ptruint(buffer),valuetype,nil )) xor inv then //found one
+        if checkroutine(p,savedscanhandler.getpointertoaddress(base+ptruint(p)-ptruint(buffer),valuetype,nil )) then //found one
           StoreResultRoutine(base+ptruint(p)-ptruint(buffer),p);
 
         inc(p, stepsize);
@@ -3356,7 +3400,7 @@ begin
           for j:=0 to customtypecount-1 do customtypesmatch[j]:=true;
 
 
-        if checkroutine(p,oldp) xor inv then //found one
+        if checkroutine(p,oldp) then //found one
           StoreResultRoutine(base+ptruint(p)-ptruint(buffer),p);
 
         inc(p, stepsize);
@@ -3468,7 +3512,7 @@ begin
           else
           begin
             //new address reached
-            if checkroutine(@newmemory[currentaddress-currentbase],savedscanhandler.getpointertoaddress(currentaddress,valuetype, nil )) xor inv then
+            if checkroutine(@newmemory[currentaddress-currentbase],savedscanhandler.getpointertoaddress(currentaddress,valuetype, nil )) then
               StoreResultRoutine(currentaddress,@newmemory[currentaddress-currentbase]);
 
             //clear typesmatch and set current address
@@ -3488,7 +3532,7 @@ begin
 
         end;
 
-        if checkroutine(@newmemory[currentaddress-currentbase],savedscanhandler.getpointertoaddress(currentaddress,valuetype, nil )) xor inv then
+        if checkroutine(@newmemory[currentaddress-currentbase],savedscanhandler.getpointertoaddress(currentaddress,valuetype, nil )) then
           StoreResultRoutine(currentaddress,@newmemory[currentaddress-currentbase]);
 
       end
@@ -3519,7 +3563,7 @@ begin
           begin
             //new address
             //we now have a list of entries with all the same address, k-1 points to the last one
-            if CheckRoutine(@newmemory[currentaddress-currentbase],@oldmem[(k-1)*vsize]) xor inv then
+            if CheckRoutine(@newmemory[currentaddress-currentbase],@oldmem[(k-1)*vsize]) then
               StoreResultRoutine(currentaddress,@newmemory[currentaddress-currentbase]);
 
             //clear typesmatch and set current address
@@ -3539,7 +3583,7 @@ begin
 
         end;
 
-        if CheckRoutine(@newmemory[currentaddress-currentbase],@oldmem[j*vsize]) xor inv then
+        if CheckRoutine(@newmemory[currentaddress-currentbase],@oldmem[j*vsize]) then
           StoreResultRoutine(currentaddress,@newmemory[currentaddress-currentbase]);
       end;
     end;
@@ -3797,6 +3841,7 @@ begin
   if variableType=vtGrouped then
   begin
     groupdata:=TGroupData.create(scanvalue1, self);
+    groupdata.floatscanWithoutExponents:=floatscanWithoutExponents;
   end
   else
   if scanOption in [soCustom, soExactValue,soValueBetween,soBiggerThan,soSmallerThan, soDecreasedValueBy, soIncreasedValueBy] then
@@ -5001,15 +5046,18 @@ end;
 //===============TScanController===============//
 
 procedure TScanController.updategui;
-var totaladdressestoscan, currentlyscanned: qword;
+var totaladdressestoscan, currentlyscanned, foundcount: qword;
 begin
   //runs in mainthread
   if OwningMemScan.progressbar<>nil then
   begin
-    OwningMemScan.progressbar.Position:=OwningMemScan.GetProgress(totaladdressestoscan,currentlyscanned);
+    OwningMemScan.progressbar.Position:=OwningMemScan.GetProgress(totaladdressestoscan,currentlyscanned, foundcount);
     {$ifdef windows}
     SetProgressValue(OwningMemScan.progressbar.Position, OwningMemScan.progressbar.Max);
     {$endif}
+
+    if assigned(owningmemscan.OnGuiUpdate) then
+      owningmemscan.OnGuiUpdate(OwningMemScan, totaladdressestoscan,currentlyscanned, foundcount);
   end;
 end;
 
@@ -6219,7 +6267,8 @@ begin
 
         deletefile(OwningMemScan.ScanresultFolder+'ADDRESSES.UNDO');
         renamefile(OwningMemScan.ScanresultFolder+'ADDRESSES.TMP',OwningMemScan.ScanresultFolder+'ADDRESSES.UNDO');
-        renamefile(scanners[0].Addressfilename, OwningMemScan.ScanresultFolder+'ADDRESSES.TMP');
+        if not renamefile(scanners[0].Addressfilename, OwningMemScan.ScanresultFolder+'ADDRESSES.TMP') then
+          RenameFileUTF8(scanners[0].Addressfilename, OwningMemScan.ScanresultFolder+'ADDRESSES.TMP');
 
         //memory
         deletefile(OwningMemScan.ScanresultFolder+'MEMORY.UNDO');
@@ -6231,7 +6280,7 @@ begin
           AddressFile:=TFileStream.Create(OwningMemScan.ScanresultFolder+'ADDRESSES.TMP',fmOpenWrite or fmShareDenyNone);
           MemoryFile:=TFileStream.Create(OwningMemScan.ScanresultFolder+'MEMORY.TMP',fmOpenWrite or fmsharedenynone);
         except
-          raise exception.create(rsErrorWhenWhileLoadingResult);
+          raise exception.create(rsErrorWhenWhileLoadingResult+' ('+OwningMemScan.ScanresultFolder+'ADDRESSES.TMP'+')');
         end;
 
 
@@ -6277,18 +6326,16 @@ begin
     if haserror then err:=1;
 
     isdone:=true;
-{$ifdef windows}
-    if notifywindow<>0 then
-      postMessage(notifywindow,notifymessage,err,0);
-{$else}
+
     //todo: notify the caller the scan is done
     OutputDebugString('It actually finished');
-{$endif}
-
 
     isdoneevent.setevent;
 
     haserror2:=false;
+
+    if assigned(OwningMemScan.OnInitialScanDone) then
+      Queue(OwningMemScan.InitialScanDone);
 
     //todo: instead of appending the results, link to the result files instead
     if scanOption<>soUnknownValue then
@@ -6489,10 +6536,9 @@ begin
         {$ENDIF}
 
         scanController.isDoneEvent.SetEvent;
-        {$IFNDEF UNIX}
-        if notifywindow<>0 then
-          PostMessage(notifywindow, notifymessage,0,0);
-        {$ENDIF}
+        if assigned(fOnScanDone) then
+          fOnScanDone(self);
+
       end;
 
 
@@ -6505,16 +6551,18 @@ begin
   //and now the caller has to wait
 end;
 
+function TMemscan.hasError;
+begin
+  result:=false;
+  if scancontroller<>nil then
+    result:=scancontroller.haserror;
+end;
 
 function TMemscan.GetErrorString: string;
 begin
   result:='';
   if scancontroller<>nil then
-  begin
-    scancontroller.WaitFor;
     result:=scancontroller.errorstring;
-  end;
-
 end;
 
 function TMemscan.canUndo: boolean;
@@ -6613,6 +6661,14 @@ begin
     result:=scancontroller.isreallydoneEvent.WaitFor(timeout)<>wrTimeout;
 end;
 
+
+procedure TMemscan.InitialScanDone;
+//called by the scancontroller when the scan has finished
+begin
+  if assigned(fOnInitialScanDone) then
+    fOnInitialScanDone(self);
+end;
+
 procedure TMemscan.ScanDone;
 //called by the scancontroller when the scan has finished
 begin
@@ -6642,18 +6698,73 @@ begin
     result:=false;
 end;
 
+function TMemscan.canWriteResults: boolean;
+var
+  f: tfilestream=nil;
+  s: string;
+begin
+  try
+    try
+      f:=TFileStream.Create(ScanresultFolder+'ADDRESSES.TMP.FILETEST',fmCreate);
+      f.WriteAnsiString('This file can be written');
+      freeandnil(f);
+
+      f:=TFileStream.Create(ScanresultFolder+'ADDRESSES.TMP.FILETEST',fmOpenRead or fmShareDenyNone);
+      s:=f.ReadAnsiString;
+      if s<>'This file can be written' then raise exception.create('Invalid data read');
+      freeandnil(f);
+
+      f:=TFileStream.Create(ScanresultFolder+'ADDRESSES.TMP.FILETEST',fmOpenWrite or fmShareDenyNone);
+      f.WriteAnsiString('Overwrite works properly');
+      freeandnil(f);
+
+      f:=TFileStream.Create(ScanresultFolder+'ADDRESSES.TMP.FILETEST',fmOpenRead or fmShareDenyNone);
+      s:=f.ReadAnsiString;
+      if s<>'Overwrite works properly' then raise exception.create('Invalid data read2');
+      freeandnil(f);
+
+
+
+
+
+      DeleteFile(ScanresultFolder+'ADDRESSES.TMP.FILETEST');
+
+      f:=TFileStream.Create(ScanresultFolder+'ADDRESSES.TMP.FILETEST',fmCreate);
+      f.WriteAnsiString('This file can be recreated');
+      freeandnil(f);
+
+      f:=TFileStream.Create(ScanresultFolder+'ADDRESSES.TMP.FILETEST',fmOpenRead or fmShareDenyNone);
+      s:=f.ReadAnsiString;
+      if s<>'This file can be recreated' then raise exception.create('Invalid data read 3');
+      freeandnil(f);
+
+
+      result:=true;
+    finally
+      if f<>nil then
+        f.free;
+
+      DeleteFile(ScanresultFolder+'ADDRESSES.TMP.FILETEST');
+    end;
+
+  except
+    result:=false;
+  end;
+end;
+
 function TMemscan.GetScanFolder: string;
 begin
   result:=ScanresultFolder;
 end;
 
-function TMemscan.GetProgress(var totaladdressestoscan:qword; var currentlyscanned: qword):integer;
+function TMemscan.GetProgress(var totaladdressestoscan:qword; var currentlyscanned: qword; var resultsfound: qword):integer;
 {returns a value between 1 and 1000 representing how far the scan is}
 var i: integer;
 begin
   result:=0;
   totaladdressestoscan:=0;
   currentlyscanned:=0;
+  resultsfound:=0;
 
   //Take care of memory
   if self.scanController<>nil then
@@ -6663,7 +6774,10 @@ begin
     scanController.scannersCS.enter;
     try
       for i:=0 to length(self.scanController.scanners)-1 do
+      begin
         inc(currentlyscanned,self.scanController.scanners[i].scanned);
+        inc(resultsfound, self.scanController.scanners[i].totalfound+self.scanController.scanners[i].found);
+      end;
 
     finally
       scanController.scannersCS.Leave;
@@ -6762,6 +6876,7 @@ begin
 
   if scanController<>nil then
   begin
+    {$ifdef windows}
     if GUIScanner and (WaitForSingleObject(scancontroller.handle, 500)<>WAIT_OBJECT_0) then
     begin
       if frmBusy=nil then
@@ -6773,6 +6888,7 @@ begin
       end;
 
     end;
+    {$endif}
 
     scancontroller.WaitFor; //could be it's still saving the results of the previous scan
     freeandnil(scanController);
@@ -6814,6 +6930,12 @@ begin
   scanController.fastscanmethod:=fastscanmethod;
   scancontroller.fastscandigitcount:=fastscandigitcount;
 
+  if codepage then
+  begin
+    scanvalue1:=UTF8ToWinCP(scanvalue1);
+    scanValue2:=UTF8ToWinCP(scanvalue1);
+  end;
+
   scanController.scanValue1:=scanvalue1; //usual scanvalue
   scanController.scanValue2:=scanValue2; //2nd value for between scan
   scanController.startaddress:=self.startaddress;
@@ -6826,8 +6948,6 @@ begin
   scancontroller.floatscanWithoutExponents:=floatscanWithoutExponents;
   scancontroller.inverseScan:=inverseScan;
   scancontroller.percentage:=percentage;
-  scancontroller.notifywindow:=notifywindow;
-  scancontroller.notifymessage:=notifymessage;
 
   fLastscantype:=stNextScan;
   fLastScanValue:=scanvalue1;
@@ -6900,8 +7020,15 @@ begin
   scanController.fastscanmethod:=fastscanmethod;
   scancontroller.fastscandigitcount:=fastscandigitcount;
 
+  if codepage then
+  begin
+    scanvalue1:=UTF8ToWinCP(scanvalue1);
+    scanValue2:=UTF8ToWinCP(scanvalue1);
+  end;
+
   scanController.scanValue1:=scanvalue1; //usual scanvalue
   scanController.scanValue2:=scanValue2; //2nd value for between scan
+
 
   scanController.startaddress:=startaddress;
   scanController.stopaddress:=stopaddress;
@@ -6913,8 +7040,6 @@ begin
   scancontroller.floatscanWithoutExponents:=floatscanWithoutExponents;
   scancontroller.inverseScan:=InverseScan;
   scancontroller.percentage:=false; //first scan does not have a percentage scan
-  scancontroller.notifywindow:=notifywindow;
-  scancontroller.notifymessage:=notifymessage;
 
   scanController.OnlyOne:=onlyone;
 
@@ -6926,11 +7051,11 @@ begin
 
 end;
 
-procedure TMemscan.setScanDoneCallback(notifywindow: thandle; notifymessage: integer);
+{procedure TMemscan.setScanDoneCallback(notifywindow: thandle; notifymessage: integer);
 begin
-  self.notifywindow:=notifywindow;
-  self.notifymessage:=notifymessage;
-end;
+  //self.notifywindow:=notifywindow;
+  //self.notifymessage:=notifymessage;
+end;  }
 
 procedure TMemScan.parseProtectionflags(protectionflags: string);
 var i: integer;

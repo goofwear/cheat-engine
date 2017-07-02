@@ -12,7 +12,8 @@ object frmStackView: TfrmStackView
   OnCreate = FormCreate
   OnDestroy = FormDestroy
   OnShow = FormShow
-  LCLVersion = '1.6.0.4'
+  PopupMode = pmAuto
+  LCLVersion = '1.6.4.0'
   object lvStack: TListView
     Left = 0
     Height = 211
@@ -46,6 +47,7 @@ object frmStackView: TfrmStackView
     OnDblClick = lvStackDblClick
   end
   object PopupMenu1: TPopupMenu
+    OnPopup = PopupMenu1Popup
     left = 108
     top = 84
     object miAddESP: TMenuItem
@@ -63,21 +65,37 @@ object frmStackView: TfrmStackView
       RadioItem = True
       OnClick = miAddESPClick
     end
+    object miAddRef: TMenuItem
+      Caption = '(ref+*) Ref will be %x'
+      GroupIndex = 1
+      RadioItem = True
+      ShortCut = 32
+      OnClick = miAddRefClick
+    end
     object MenuItem1: TMenuItem
       Caption = '-'
     end
     object miCopyAddress: TMenuItem
       Caption = 'Copy Address'
+      ShortCut = 24643
       OnClick = miCopyAddressClick
     end
     object miCopyValue: TMenuItem
       Tag = 1
       Caption = 'Copy Value'
+      ShortCut = 16451
       OnClick = miCopyAddressClick
     end
     object miCopySecondary: TMenuItem
       Tag = 2
       Caption = 'Copy Secondary'
+      ShortCut = 57411
+      OnClick = miCopyAddressClick
+    end
+    object MenuItem6: TMenuItem
+      Tag = 3
+      Caption = 'Copy Line'
+      ShortCut = 49219
       OnClick = miCopyAddressClick
     end
     object MenuItem4: TMenuItem

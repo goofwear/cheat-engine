@@ -284,6 +284,8 @@ var
   list: tstringlist;
 begin
   list:=tstringlist(combobox.tag);
+  if list=nil then exit;
+
   combobox.Items.Clear;
 
   maxwidth:=combobox.clientwidth-combobox.Left;
@@ -1212,11 +1214,15 @@ begin
     edtReverseStop.MaxLength:=edtReverseStart.MaxLength;
   end;
 
+  i:=editMaxLevel.left+editMaxLevel.width;
+  combobox1.width:=combobox1.width+(i-(combobox1.left+combobox1.width));
+
+
   i:=max(edtReverseStart.clientwidth, max(canvas.TextWidth(edtReverseStart.text), canvas.TextWidth(edtReverseStop.text)))+8;
   edtReverseStart.clientwidth:=i;
   edtReverseStop.clientwidth:=i;
 
-  i:=max(canvas.TextWidth(editStructsize.text), editStructsize.width)+4;
+  i:=max(canvas.TextWidth(editStructsize.text)+4, editStructsize.clientwidth);
   editStructsize.clientwidth:=i;
 
   i:=max(btnOk.width, btnCancel.width);
@@ -1224,7 +1230,6 @@ begin
   btnCancel.autosize:=false;
   btnok.width:=i;
   btnCancel.width:=i;
-
 
   firstshow:=false;
 
@@ -1240,6 +1245,8 @@ begin
 
   UpdateAddressList(cbAddress);
   cbAddress.ItemHeight:=cbValueType.ItemHeight;
+
+
 end;
 
 procedure TfrmPointerScannerSettings.FormCreate(Sender: TObject);

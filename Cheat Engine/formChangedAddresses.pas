@@ -31,6 +31,9 @@ type
   TfrmChangedAddresses = class(TForm)
     lblInfo: TLabel;
     MenuItem1: TMenuItem;
+    MenuItem2: TMenuItem;
+    miResetCount: TMenuItem;
+    miDeleteSelectedEntries: TMenuItem;
     miCopyToAddresslist: TMenuItem;
     miDissect: TMenuItem;
     micbShowAsHexadecimal: TMenuItem;
@@ -46,8 +49,10 @@ type
     procedure ChangedlistCompare(Sender: TObject; Item1, Item2: TListItem;
       Data: Integer; var Compare: Integer);
     procedure MenuItem1Click(Sender: TObject);
+    procedure miDeleteSelectedEntriesClick(Sender: TObject);
     procedure micbShowAsHexadecimalClick(Sender: TObject);
     procedure miDissectClick(Sender: TObject);
+    procedure miResetCountClick(Sender: TObject);
     procedure OKButtonClick(Sender: TObject);
     procedure FormClose(Sender: TObject; var Action: TCloseAction);
     procedure FormShow(Sender: TObject);
@@ -60,6 +65,7 @@ type
     procedure FormCreate(Sender: TObject);
   private
     { Private declarations }
+    hassetsizes: boolean;
     addresslist: TMap;
     faddress: ptruint;
     procedure refetchValues(specificaddress: ptruint=0);
@@ -274,6 +280,8 @@ begin
 
 end;
 
+
+
 procedure TfrmChangedAddresses.ChangedlistColumnClick(Sender: TObject;
   Column: TListColumn);
 begin
@@ -380,6 +388,48 @@ begin
   list.free;
 end;
 
+procedure TfrmChangedAddresses.miResetCountClick(Sender: TObject);
+var
+  i: integer;
+  ae: TAddressEntry;
+begin
+  for i:=changedlist.items.Count-1 downto 0 do
+  begin
+    ae:=TAddressEntry(changedlist.Items[i].Data);
+    ae.count:=0;
+  end;
+
+  refetchValues;
+end;
+
+procedure TfrmChangedAddresses.miDeleteSelectedEntriesClick(Sender: TObject);
+var
+  i: integer;
+  ae: TAddressEntry;
+begin
+  if changedlist.SelCount>=1 then
+  begin
+    if MessageDlg('Delete addresses', 'Are you sure you wish to delete these entries(s)?', mtConfirmation, [mbyes,mbno],0) = mryes then
+    begin
+      for i:=changedlist.items.Count-1 downto 0 do
+      begin
+        if changedlist.items[i].Selected then
+        begin
+          ae:=TAddressEntry(changedlist.Items[i].Data);
+
+          if addresslist<>nil then
+            addresslist.Delete(ae.address);
+
+          if ae<>nil then
+            ae.free;
+
+          changedlist.Items[i].Delete;
+        end;
+      end;
+    end;
+  end;
+end;
+
 procedure TfrmChangedAddresses.FormClose(Sender: TObject;
   var Action: TCloseAction);
 var temp:dword;
@@ -398,6 +448,16 @@ end;
 procedure TfrmChangedAddresses.FormShow(Sender: TObject);
 begin
   OKButton.Caption:=rsStop;
+
+  if not hassetsizes then
+  begin
+    changedlist.Column[0].Width:=max(changedlist.Column[0].Width, canvas.TextWidth('DDDDDDDDFFFFF'));
+    changedlist.Column[1].Width:=max(changedlist.Column[1].Width, canvas.TextWidth('9999999.999'));
+    changedlist.Column[2].Width:=max(changedlist.Column[2].Width, canvas.TextWidth('999999'));
+
+    ClientWidth:=max(clientwidth, changedlist.Column[0].Width+changedlist.Column[1].Width+changedlist.Column[2].Width+20);
+    hassetsizes:=true;
+  end;
 end;
 
 procedure TfrmChangedAddresses.ChangedlistDblClick(Sender: TObject);
@@ -432,6 +492,7 @@ procedure TfrmChangedAddresses.PopupMenu1Popup(Sender: TObject);
 begin
   Showregisterstates1.enabled:=changedlist.selected<>nil;
   Browsethismemoryregion1.enabled:=changedlist.selected<>nil;
+  miDeleteSelectedEntries.enabled:=changedlist.SelCount>0;
 
   miDissect.enabled:=changedlist.SelCount>0;
 end;
@@ -540,7 +601,7 @@ begin
     debuggerthread.FindWhatCodeAccessesStop(self);
 
 
-  saveformposition(self,[]);
+  saveformposition(self,[changedlist.Column[0].Width,changedlist.Column[1].Width,changedlist.Column[2].Width]);
   if addresslist<>nil then
     addresslist.Free;
 end;
@@ -552,7 +613,17 @@ begin
   okbutton.caption:=rsStop;
 
   setlength(x, 0);
-  loadformposition(self,x);
+  if loadformposition(self,x) then
+  begin
+    if length(x)>0 then
+    begin
+      changedlist.Column[0].Width:=x[0];
+      changedlist.Column[1].Width:=x[1];
+      changedlist.Column[2].Width:=x[2];
+      hassetsizes:=true;
+    end;
+
+  end;
 
   //fill in the custom types
   for i:=0 to customTypes.count-1 do

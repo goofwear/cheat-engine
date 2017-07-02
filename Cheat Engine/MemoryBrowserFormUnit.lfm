@@ -1,20 +1,21 @@
 object MemoryBrowser: TMemoryBrowser
-  Left = 826
+  Left = 812
   Height = 578
-  Top = 299
+  Top = 215
   Width = 716
   HelpContext = 12
   Caption = 'Memory Viewer'
   ClientHeight = 558
   ClientWidth = 716
   Menu = MainMenu1
+  OnActivate = FormActivate
   OnClose = FormClose
   OnCreate = FormCreate
   OnDestroy = FormDestroy
   OnResize = FormResize
   OnShow = FormShow
   Position = poScreenCenter
-  LCLVersion = '1.6.0.4'
+  LCLVersion = '1.6.4.0'
   object Splitter1: TSplitter
     Cursor = crVSplit
     Left = 0
@@ -544,6 +545,7 @@ object MemoryBrowser: TMemoryBrowser
       object lvStacktraceData: TListView
         Left = 2
         Height = 247
+        Hint = 'Shows the current stack.'#13#10'Tip: When doubleclicking the value and it represents an address, then you can hold shift to make it show in the disassembler, and ctrl to make it show in the memory view. Else Cheat Engine will guess it for you based on if it''s executable memory or not'
         Top = 2
         Width = 206
         Align = alClient
@@ -561,10 +563,15 @@ object MemoryBrowser: TMemoryBrowser
             Caption = 'Value'
             Width = 42
           end>
+        DragKind = dkDock
         HideSelection = False
+        MultiSelect = True
         OwnerData = True
+        ParentShowHint = False
+        PopupMenu = pmStacktrace
         ReadOnly = True
         RowSelect = True
+        ShowHint = True
         TabOrder = 0
         ViewStyle = vsReport
         OnData = lvStacktraceDataData
@@ -583,6 +590,16 @@ object MemoryBrowser: TMemoryBrowser
     object Goto1: TMenuItem
       Caption = 'Goto address'
       OnClick = Goto1Click
+    end
+    object miHVBack: TMenuItem
+      Caption = 'Back'
+      ShortCut = 8
+      OnClick = miHVBackClick
+    end
+    object miHVFollow: TMenuItem
+      Caption = 'Follow'
+      ShortCut = 32
+      OnClick = miHVFollowClick
     end
     object Search1: TMenuItem
       Caption = 'Search memory...'
@@ -762,6 +779,12 @@ object MemoryBrowser: TMemoryBrowser
       Caption = 'Lock current rowsize'
       OnClick = miLockRowsizeClick
     end
+    object miShowRelative: TMenuItem
+      AutoCheck = True
+      Caption = 'Show relative addresses'
+      ShortCut = 16397
+      OnClick = miShowRelativeClick
+    end
     object MenuItem16: TMenuItem
       Caption = '-'
       Visible = False
@@ -840,10 +863,12 @@ object MemoryBrowser: TMemoryBrowser
     end
     object Back1: TMenuItem
       Caption = 'Back'
+      ShortCut = 8
       OnClick = Back1Click
     end
     object Follow1: TMenuItem
       Caption = 'Follow'
+      ShortCut = 32
       Visible = False
       OnClick = Follow1Click
     end
@@ -1276,7 +1301,7 @@ object MemoryBrowser: TMemoryBrowser
         end
       end
       object miTextPreferences: TMenuItem
-        Caption = 'Text preferences'
+        Caption = 'Preferences'
         OnClick = miTextPreferencesClick
       end
     end
@@ -1511,6 +1536,7 @@ object MemoryBrowser: TMemoryBrowser
     top = 104
   end
   object pmStacktrace: TPopupMenu
+    OnPopup = pmStacktracePopup
     left = 536
     top = 360
     object All1: TMenuItem
@@ -1527,6 +1553,14 @@ object MemoryBrowser: TMemoryBrowser
       Caption = 'Non system modules only'
       GroupIndex = 1
       OnClick = Nonsystemmodulesonly1Click
+    end
+    object MenuItem28: TMenuItem
+      Caption = '-'
+    end
+    object miSVCopy: TMenuItem
+      Caption = 'Copy'
+      ShortCut = 16451
+      OnClick = miSVCopyClick
     end
     object N17: TMenuItem
       Caption = '-'
@@ -1561,6 +1595,14 @@ object MemoryBrowser: TMemoryBrowser
       GroupIndex = 2
       RadioItem = True
       OnClick = miAddESPClick
+    end
+    object miAddRef: TMenuItem
+      AutoCheck = True
+      Caption = '(ref+*) Ref will be %x'
+      GroupIndex = 2
+      RadioItem = True
+      ShortCut = 32
+      OnClick = miAddRefClick
     end
   end
   object pmRegisters: TPopupMenu

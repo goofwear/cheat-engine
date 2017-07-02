@@ -2,6 +2,8 @@
 command /C echo changing to dos-16 file structure
 set C_DEFINES=
 
+set LINKER_FLAGS=/INTEGRITYCHECK
+
 set copycmd=/Y
 copy sources.ce sources
 
@@ -13,6 +15,9 @@ goto error
 	if "%AMD64%"=="1" goto x86success
 
 	copy .\obj%BUILD_ALT_DIR%\i386\dbk.sys "..\Cheat Engine\bin\dbk32.sys"
+        copy .\obj%BUILD_ALT_DIR%\i386\dbk.sys .\obj%BUILD_ALT_DIR%\i386\dbk32.sys
+        copy .\obj%BUILD_ALT_DIR%\i386\dbk.pdb .\obj%BUILD_ALT_DIR%\i386\dbk32.pdb
+
 	goto successend
 
 :x86success:

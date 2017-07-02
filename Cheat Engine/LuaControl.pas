@@ -12,7 +12,7 @@ procedure control_addMetaData(L: PLua_state; metatable: integer; userdata: integ
 
 implementation
 
-uses luahandler, pluginexports, LuaCaller, LuaComponent, LuaClass;
+uses luahandler, pluginexports, LuaCaller, LuaComponent, LuaClass, LuaObject;
 
 function control_repaint(L: PLua_State): integer; cdecl;
 begin
@@ -364,7 +364,14 @@ var
   i: integer;
 begin
   c:=luaclass_getClassObject(L);
-  luaclass_newClass(L, c.PopupMenu);
+
+  luaclass_newClass(L,c);
+  lua_pushstring(L,'PopupMenu');
+  lua_getProperty(L);
+
+  if lua_isnil(L,-1) then
+    luaclass_newClass(L, c.PopupMenu);
+
   result:=1;
 end;
 
@@ -444,6 +451,44 @@ begin
   result:=0
 end;
 
+function control_screenToClient(L: PLua_State): integer; cdecl;
+var
+  control: TControl;
+  p: tpoint;
+begin
+  result:=0;
+  control:=luaclass_getClassObject(L);
+  if lua_gettop(L)>=2 then
+  begin
+    p.x:=lua_tointeger(L,1);
+    p.y:=lua_tointeger(L,2);
+
+    p:=control.ScreenToClient(p);
+    lua_pushinteger(L,p.x);
+    lua_pushinteger(L,p.y);
+    result:=2;
+  end;
+end;
+
+function control_clientToScreen(L: PLua_State): integer; cdecl;
+var
+  control: TControl;
+  p: tpoint;
+begin
+  result:=0;
+  control:=luaclass_getClassObject(L);
+  if lua_gettop(L)>=2 then
+  begin
+    p.x:=lua_tointeger(L,1);
+    p.y:=lua_tointeger(L,2);
+
+    p:=control.ClientToScreen(p);
+    lua_pushinteger(L,p.x);
+    lua_pushinteger(L,p.y);
+    result:=2;
+  end;
+end;
+
 procedure control_addMetaData(L: PLua_state; metatable: integer; userdata: integer);
 begin
   component_addMetaData(L, metatable, userdata);
@@ -482,6 +527,8 @@ begin
 
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'bringToFront', control_bringToFront);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'sendToBack', control_sendToBack);
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'screenToClient', control_screenToClient);
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'clientToScreen', control_clientToScreen);
 
   //luaclass_addPropertyToTable(L, metatable, userdata, 'Caption', control_getCaption, control_setCaption);
   //luaclass_addPropertyToTable(L, metatable, userdata, 'Top', control_getTop, control_setTop);

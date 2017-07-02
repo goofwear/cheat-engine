@@ -56,6 +56,7 @@ type
     tempbuffer: TMemoryStream;
 
     novaluecheck: boolean;
+    filterOutAccessible: boolean;
     PointerAddressToFind: ptrUint;
     forvalue: boolean;
     valuetype: TVariableType;
@@ -138,6 +139,7 @@ type
     endoffsetvalues: array of dword;
 
     novaluecheck: boolean; //when set to true the value and final address are not compared, just check that he final address is in fact readable
+    filterOutAccessible: boolean; //when set to true, final address should be not accessible
     useluafilter: boolean; //when set to true each pointer will be passed on to the luafilter function
     luafilter: string; //function name of the luafilter
 
@@ -831,6 +833,10 @@ begin
       lvResults.Visible:=false;
 
 
+      if lblProgressbar1.Height>progressbar1.Height then
+        ProgressBar1.Height:=lblProgressbar1.height;
+
+      lblProgressbar1.Top:=progressbar1.Top+(progressbar1.height div 2)-(lblProgressbar1.Height div 2);
 
 
       pnlProgress.Visible:=true;
@@ -881,6 +887,7 @@ begin
 
           pb.left:=ProgressBar1.left;
           pb.width:=ProgressBar1.width;
+          pb.height:=Progressbar1.Height;
           pb.Anchors:=ProgressBar1.Anchors;
 
           lb:=TLabel.create(self);
@@ -895,6 +902,8 @@ begin
 
 
           pnlProgress.ClientHeight:=pb.Top+pb.height+1;
+          if pnlProgressname.clientwidth<lb.width then
+            pnlProgressName.ClientWidth:=lb.width+10;
 
         end;
 
@@ -1128,6 +1137,8 @@ begin
 
 
             pnlProgress.ClientHeight:=pb.Top+pb.height+1;
+            if pnlProgressname.clientwidth<lb.width then
+              pnlProgressName.ClientWidth:=lb.width+10;
           end;
         end;
 
@@ -1387,6 +1398,8 @@ begin
       SQLQuery.SQL.Text:='Select ptrid from pointerfiles where name="'+name+'"';
       SQLQuery.Active:=true;
 
+      //SQLQuery.Params;
+
       if SQLQuery.RecordCount>0 then
       begin
         ptrid:=SQLQuery.FieldByName('ptrid').text;
@@ -1414,6 +1427,10 @@ begin
       lblProgressbar1.Caption:=rsPSExporting;
       progressbar1.position:=0;
       progressbar1.max:=100;
+      if lblProgressbar1.Height>progressbar1.Height then
+        ProgressBar1.Height:=lblProgressbar1.height;
+
+      lblProgressbar1.Top:=progressbar1.Top+(progressbar1.height div 2)-(lblProgressbar1.Height div 2);
       pnlProgress.visible:=true;
 
       Update;
@@ -1708,6 +1725,12 @@ begin
     lblProgressbar1.Caption:=rsPSImporting;
     progressbar1.position:=0;
     progressbar1.max:=100;
+
+    if lblProgressbar1.Height>progressbar1.Height then
+     ProgressBar1.Height:=lblProgressbar1.height;
+
+    lblProgressbar1.Top:=progressbar1.Top+(progressbar1.height div 2)-(lblProgressbar1.Height div 2);
+
     pnlProgress.visible:=true;
 
     Update;
@@ -2512,6 +2535,7 @@ var
     pi: TPageInfo;
     x: dword;
     valid: boolean;
+    rangeAndStartOffsetsEndOffsets_Valid: boolean;
 
     tempvalue: pointer;
     value: pointer;
@@ -2534,14 +2558,7 @@ begin
     if useluafilter then
     begin
       //create a new lua thread
-      luacs.enter;
-      try
-        l:=lua_newthread(luavm); //pushes the thread on the luavm stack.
-        lref:=luaL_ref(luavm,LUA_REGISTRYINDEX); //add a reference so the garbage collector wont destroy the thread (pops the thread off the stack)
-      finally
-        luacs.leave;
-      end;
-
+      L:=GetLuaState;
 
       lua_getglobal(L, pchar(luafilter));
       lfun:=lua_gettop(L);
@@ -2630,6 +2647,8 @@ begin
                 end;
               end;
 
+              rangeAndStartOffsetsEndOffsets_Valid:=valid;
+
               if valid then
               begin
                 //evaluate the pointer to address
@@ -2653,7 +2672,7 @@ begin
 
                         pi:=rescanhelper.FindPage((address shr 12)+1);
                         if pi.data<>nil then
-                          copymemory(pointer(ptruint(@address)+k), @pi.data[0], pointersize-k)
+                          copymemory(pointer(ptruint(@tempaddress)+k), @pi.data[0], pointersize-k)
                         else
                         begin
                           valid:=false;
@@ -2695,7 +2714,16 @@ begin
                 end;
               end;
 
-              if valid then
+              //mgr.inz.Player patch:
+              //if everything until "evaluate the pointer to address" was fine
+              //and user wants all valid (false positive valid) pointers to be removed
+              //(so, wants to keep with final address not evaluated), invert valid status.
+              //Also, do not check final address readability and do not compare address/value.
+
+              if filterOutAccessible and rangeAndStartOffsetsEndOffsets_Valid then
+                valid:=not valid;
+
+              if (not filterOutAccessible) and valid then
               begin
                 if novaluecheck or forvalue then
                 begin
@@ -2797,18 +2825,7 @@ begin
         freeandnil(tempbuffer);
 
       if l<>nil then
-      begin
         lua_settop(L, 0);
-
-        //remove the reference to the thread
-        luacs.enter;
-        try
-          luaL_unref(LuaVM, LUA_REGISTRYINDEX, lref);
-        finally
-          luacs.leave;
-        end;
-
-      end;
 
       done:=true;
 
@@ -2933,6 +2950,7 @@ begin
       rescanworkers[i].pointermap:=pointermap;
       rescanworkers[i].PointerAddressToFind:=self.address;
       rescanworkers[i].novaluecheck:=novaluecheck;
+      rescanworkers[i].filterOutAccessible:=filterOutAccessible;
 
       rescanworkers[i].forvalue:=forvalue;
       rescanworkers[i].valuesize:=valuesize;
@@ -3115,8 +3133,14 @@ begin
           rescan.progressbar:=progressbar1;
 
           rescan.novaluecheck:=cbNoValueCheck.checked;
+          rescan.filterOutAccessible:=cbfilterOutAccessible.checked;
 
           lblProgressbar1.caption:=rsPSREscanning;
+          if lblProgressbar1.Height>progressbar1.Height then
+           ProgressBar1.Height:=lblProgressbar1.height;
+
+          lblProgressbar1.Top:=progressbar1.Top+(progressbar1.height div 2)-(lblProgressbar1.Height div 2);
+
           pnlProgress.visible:=true;
 
 
@@ -3140,6 +3164,9 @@ begin
             rescan.pointermapprogressbarlabel.showhint:=true;
 
             pnlProgress.ClientHeight:=rescan.pointermapprogressbar.Top+rescan.pointermapprogressbar.height+1;
+
+            if pnlProgressname.clientwidth<rescan.pointermapprogressbarlabel.width then
+              pnlProgressName.ClientWidth:=rescan.pointermapprogressbarlabel.width+10;
 
           end;
 
@@ -3192,7 +3219,7 @@ begin
           Rescanmemory1.Enabled:=false;
           new1.Enabled:=false;
 
-          if cbNoValueCheck.checked=false then
+          if (cbNoValueCheck.checked=false) and (cbfilterOutAccessible.checked=false) then
           begin
             if rbFindAddress.Checked then
             begin
@@ -3345,8 +3372,6 @@ begin
         if pnlProgressBar.Controls[i]<>Progressbar1 then
           pnlProgressBar.Controls[i].Visible:=false;
       end;
-
-      pnlProgress.height:=ProgressBar1.height+1;
 
       ProgressBar1.visible:=true;
       Progressbar1.Position:=0;

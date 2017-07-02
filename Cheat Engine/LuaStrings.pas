@@ -33,6 +33,24 @@ begin
   strings.Clear;
 end;
 
+function strings_beginUpdate(L: Plua_State): integer; cdecl;
+var
+  strings: TStrings;
+begin
+  result:=0;
+  strings:=luaclass_getClassObject(L);
+  strings.beginupdate;
+end;
+
+function strings_endUpdate(L: Plua_State): integer; cdecl;
+var
+  strings: TStrings;
+begin
+  result:=0;
+  strings:=luaclass_getClassObject(L);
+  strings.endupdate;
+end;
+
 function strings_remove(L: Plua_State): integer; cdecl;  //compat with ce 6
 var
   strings: TStrings;
@@ -117,6 +135,30 @@ begin
     strings.Text:=text;
   end;
 end;
+
+function strings_getLineBreak(L: PLua_State): integer; cdecl;
+var
+  strings: TStrings;
+begin
+  strings:=luaclass_getClassObject(L);
+  lua_pushstring(L, strings.LineBreak);
+  result:=1;
+end;
+
+function strings_setLineBreak(L: PLua_State): integer; cdecl;
+var
+  strings: TStrings;
+  LineBreak: string;
+begin
+  result:=0;
+  strings:=luaclass_getClassObject(L);
+  if lua_gettop(L)>=1 then
+  begin
+    LineBreak:=Lua_ToString(L, -1);
+    strings.LineBreak:=LineBreak;
+  end;
+end;
+
 
 function strings_indexOf(L: PLua_State): integer; cdecl;
 var
@@ -217,9 +259,13 @@ begin
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'setString', strings_setString);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'loadFromFile', strings_loadFromFile);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'saveToFile', strings_saveToFile);
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'beginUpdate', strings_beginUpdate);
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'endUpdate', strings_endUpdate);
 
   luaclass_addPropertyToTable(L, metatable, userdata, 'Count', strings_getCount, nil);
   luaclass_addPropertyToTable(L, metatable, userdata, 'Text', strings_getText, strings_setText);
+  luaclass_addPropertyToTable(L, metatable, userdata, 'LineBreak', strings_getLineBreak, strings_setLineBreak);
+
   luaclass_addArrayPropertyToTable(L, metatable, userdata, 'String', strings_getString, strings_setString);
   luaclass_setDefaultArrayProperty(L, metatable, userdata, strings_getString, strings_setString); //so strings[12] will call strings.getString(12)
 end;

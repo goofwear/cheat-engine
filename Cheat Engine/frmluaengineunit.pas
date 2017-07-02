@@ -7,8 +7,8 @@ interface
 uses
   windows, Classes, SysUtils, FileUtil, LResources, Forms, Controls, Graphics,
   Dialogs, StdCtrls, Menus, ExtCtrls, SynMemo, SynCompletion, SynEdit, lua,
-  lauxlib, lualib, LuaSyntax, luahandler, cefuncproc, strutils, InterfaceBase,
-  ComCtrls, SynGutterBase, SynEditMarks, PopupNotifier, ActnList,
+  lauxlib, lualib, LuaSyntax, luahandler, cefuncproc, sqldb, strutils,
+  InterfaceBase, ComCtrls, SynGutterBase, SynEditMarks, PopupNotifier, ActnList,
   SynEditHighlighter, AvgLvlTree, math;
 
 type
@@ -21,6 +21,8 @@ type
     GroupBox1: TGroupBox;
     MenuItem12: TMenuItem;
     MenuItem13: TMenuItem;
+    miSaveCurrentScriptAs: TMenuItem;
+    miShowScriptInOutput: TMenuItem;
     miResizeOutput: TMenuItem;
     miSetBreakpoint: TMenuItem;
     miRun: TMenuItem;
@@ -75,6 +77,7 @@ type
     procedure MenuItem8Click(Sender: TObject);
     procedure MenuItem9Click(Sender: TObject);
     procedure miResizeOutputClick(Sender: TObject);
+    procedure miSaveCurrentScriptAsClick(Sender: TObject);
     procedure miSetBreakpointClick(Sender: TObject);
     procedure mScriptChange(Sender: TObject);
     procedure mScriptGutterClick(Sender: TObject; X, Y, Line: integer;
@@ -89,6 +92,7 @@ type
       Y: Integer);
     procedure mScriptShowHint(Sender: TObject; HintInfo: PHintInfo);
     procedure Panel2Resize(Sender: TObject);
+    procedure SQLConnector1AfterConnect(Sender: TObject);
     procedure tbRunClick(Sender: TObject);
     procedure tbSingleStepClick(Sender: TObject);
     procedure tbStopDebugClick(Sender: TObject);
@@ -109,7 +113,7 @@ implementation
 
 { TfrmLuaEngine }
 
-uses luaclass;
+uses luaclass, SynEditTypes;
 
 resourcestring
   rsError = 'Script Error';
@@ -117,6 +121,7 @@ resourcestring
   rsLEUndefinedError = 'Undefined error';
   rsLEOnlyOneScriptCanBeDebuggedAtATimeEtc = 'Only one script can be debugged at a time. Continue executing this script without the debugger?';
   rsLEUserClickedStop = 'User clicked stop';
+  rsLuaEngine = 'Lua Engine';
 
 var
   LuaDebugForm: TfrmLuaEngine;
@@ -129,6 +134,11 @@ var
 procedure TfrmLuaEngine.Panel2Resize(Sender: TObject);
 begin
   btnexecute.Height:=panel2.clientheight-(2*btnexecute.top);
+end;
+
+procedure TfrmLuaEngine.SQLConnector1AfterConnect(Sender: TObject);
+begin
+
 end;
 
 procedure TfrmLuaEngine.tbRunClick(Sender: TObject);
@@ -789,13 +799,12 @@ begin
     end;
   end;
 
-  luacs.Enter;
-
   oldstack:=lua_gettop(luavm);
 
   oldprintoutput:=lua_oldprintoutput;
   try
-    mOutput.lines.add(mscript.text);
+    if miShowScriptInOutput.checked then
+      mOutput.lines.add(mscript.text);
 
 
     lua_setPrintOutput(mOutput.lines);
@@ -898,10 +907,6 @@ begin
     lua_settop(luavm, oldstack);
 
     lua_setPrintOutput(oldprintoutput);
-    luacs.Leave;
-
-
-
   end;
 end;
 
@@ -912,48 +917,66 @@ begin
 end;
 
 procedure TfrmLuaEngine.dlgReplaceFind(Sender: TObject);
-var
-  s: string;
-  i: integer;
+var so: TSynSearchOptions;
 begin
-  //find
-  if sender=FindDialog1 then
-    s:=finddialog1.FindText
-  else
-    s:=dlgReplace.FindText;
+  so:=[];
+  if not (frDown in dlgReplace.Options) then
+    so:=so+[ssoBackwards];
 
-  i:=PosEx(s, mscript.Text, mscript.selstart+1);
+  if (frEntireScope in dlgReplace.Options) then
+    so:=so+[ssoEntireScope];
 
-  if i>0 then
-  begin
-    mScript.SelStart:=i;
-    mscript.SelEnd:=i+length(s);
-  end
-  else
-    beep;//weeeeee
+  if (frMatchCase in dlgReplace.Options) then
+    so:=so+[ssoMatchCase];
+
+  if (frPromptOnReplace in dlgReplace.Options) then
+    so:=so+[ssoPrompt];
+
+  if (frFindNext in dlgReplace.Options) then
+    so:=so+[ssoFindContinue];
+
+  if (frWholeWord in dlgReplace.Options) then
+    so:=so+[ssoWholeWord];
+
+  {if mscript.SelAvail then     todo: Try to get this to work in all cases
+    so:=so+[ssoSelectedOnly];  }
+
+  mscript.SearchReplace(TFindDialog(sender).FindText,'',so);
 end;
 
 procedure TfrmLuaEngine.dlgReplaceReplace(Sender: TObject);
-var oldselstart: integer;
+var so: TSynSearchOptions;
 begin
-  //replace
-  repeat
-    oldselstart:=mScript.SelStart;
-    dlgReplaceFind(sender);
-    if oldselstart=mScript.SelStart then break;  //nothing found
+  so:=[];
+  if not (frDown in dlgReplace.Options) then
+    so:=so+[ssoBackwards];
+
+  if (frEntireScope in dlgReplace.Options) then
+    so:=so+[ssoEntireScope];
+
+  if (frMatchCase in dlgReplace.Options) then
+    so:=so+[ssoMatchCase];
+
+  if (frPromptOnReplace in dlgReplace.Options) then
+    so:=so+[ssoPrompt];
+
+  if (frReplace in dlgReplace.Options) then
+    so:=so+[ssoReplace];
+
+  if (frReplaceAll in dlgReplace.Options) then
+    so:=so+[ssoReplaceAll];
+
+  if (frFindNext in dlgReplace.Options) then
+    so:=so+[ssoFindContinue];
+
+  if (frWholeWord in dlgReplace.Options) then
+    so:=so+[ssoWholeWord];
+
+  if mscript.SelAvail then
+    so:=so+[ssoSelectedOnly];
 
 
-    if mscript.SelEnd>mscript.SelStart then
-    begin
-      oldselstart:=mScript.SelStart;
-      mScript.SelText:=dlgReplace.ReplaceText;
-      mscript.selstart:=oldselstart;
-      mscript.SelEnd:=oldselstart+length(dlgreplace.replacetext);
-    end
-    else
-      break;
-  until (frReplaceAll in dlgReplace.Options=false);
-
+  mscript.SearchReplace(dlgReplace.FindText,dlgReplace.ReplaceText,so);
 end;
 
 procedure TfrmLuaEngine.FormCreate(Sender: TObject);
@@ -970,6 +993,9 @@ begin
     begin
       miResizeOutput.checked:=x[1]=1;
       miResizeOutput.OnClick(miResizeOutput);
+
+      if length(x)>2 then
+       miShowScriptInOutput.checked:=x[2]=1;
     end;
   end;
 end;
@@ -977,7 +1003,7 @@ end;
 procedure TfrmLuaEngine.FormDestroy(Sender: TObject);
 begin
 
-  SaveFormPosition(self, [panel1.height, integer(ifthen(miResizeOutput.checked, 1,0))]);
+  SaveFormPosition(self, [panel1.height, integer(ifthen(miResizeOutput.checked, 1,0)), integer(ifthen(miShowScriptInOutput.checked, 1,0))]);
 end;
 
 procedure TfrmLuaEngine.FormShow(Sender: TObject);
@@ -1017,7 +1043,9 @@ end;
 
 procedure TfrmLuaEngine.MenuItem3Click(Sender: TObject);
 begin
-  if savedialog1.execute then
+  if savedialog1.FileName='' then
+    miSaveCurrentScriptAs.Click
+  else
     mscript.lines.SaveToFile(savedialog1.filename);
 end;
 
@@ -1068,6 +1096,15 @@ begin
     groupbox1.align:=alClient;
     //splitter1.ResizeControl:=panel1;
     splitter1.Align:=alBottom;
+  end;
+end;
+
+procedure TfrmLuaEngine.miSaveCurrentScriptAsClick(Sender: TObject);
+begin
+  if savedialog1.Execute then
+  begin
+    mscript.lines.SaveToFile(savedialog1.filename);
+    frmLuaEngine.Caption:=rsLuaEngine+' '+ExtractFileNameOnly(savedialog1.filename);
   end;
 end;
 

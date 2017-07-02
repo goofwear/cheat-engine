@@ -1,7 +1,7 @@
 object frmLuaEngine: TfrmLuaEngine
-  Left = 434
+  Left = 636
   Height = 332
-  Top = 156
+  Top = 289
   Width = 570
   HelpContext = 19
   Caption = 'Lua Engine'
@@ -12,7 +12,7 @@ object frmLuaEngine: TfrmLuaEngine
   OnDestroy = FormDestroy
   OnShow = FormShow
   Position = poScreenCenter
-  LCLVersion = '1.6.0.4'
+  LCLVersion = '1.6.4.0'
   object GroupBox1: TGroupBox
     Left = 0
     Height = 177
@@ -806,6 +806,11 @@ object frmLuaEngine: TfrmLuaEngine
         ShortCut = 16467
         OnClick = MenuItem3Click
       end
+      object miSaveCurrentScriptAs: TMenuItem
+        Caption = 'Save current script as...'
+        ShortCut = 49235
+        OnClick = miSaveCurrentScriptAsClick
+      end
       object MenuItem4: TMenuItem
         Caption = '-'
       end
@@ -826,6 +831,11 @@ object frmLuaEngine: TfrmLuaEngine
         Caption = 'Resize output on resize'
         Checked = True
         OnClick = miResizeOutputClick
+      end
+      object miShowScriptInOutput: TMenuItem
+        AutoCheck = True
+        Caption = 'Show script in output'
+        Checked = True
       end
     end
   end
@@ -898,7 +908,9 @@ object frmLuaEngine: TfrmLuaEngine
     end
   end
   object dlgReplace: TReplaceDialog
-    Options = [frDown, frHideUpDown, frReplaceAll, frHideEntireScope, frHidePromptOnReplace]
+    Width = 480
+    Height = 385
+    Options = [frDown, frReplaceAll]
     OnFind = dlgReplaceFind
     OnReplace = dlgReplaceReplace
     left = 304

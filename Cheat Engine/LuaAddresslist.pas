@@ -54,13 +54,22 @@ function addresslist_getMemoryRecord(L: PLua_State): integer; cdecl;
 var
   addresslist: TAddresslist;
   index: integer;
+  s: string;
 begin
   result:=0;
   addresslist:=luaclass_getClassObject(L);
   if lua_gettop(L)>=1 then
   begin
-    index:=lua_tointeger(L,-1);
-    luaclass_newClass(L, addresslist.MemRecItems[index]);
+    if lua_isnumber(L,-1) then
+    begin
+      index:=lua_tointeger(L,-1);
+      luaclass_newClass(L, addresslist.MemRecItems[index]);
+    end
+    else
+    begin
+      s:=Lua_ToString(L,-1);
+      luaclass_newClass(L, addresslist.getRecordWithDescription(s));
+    end;
     result:=1;
   end;
 end;
@@ -123,6 +132,12 @@ begin
   TAddresslist(luaclass_getClassObject(L)).doTypeChange;
 end;
 
+function addresslist_disableAllWithoutExecute(L: PLua_State): integer; cdecl;
+begin
+  result:=0;
+  TAddresslist(luaclass_getClassObject(L)).disableAllWithoutExecute;
+end;
+
 function addresslist_doValueChange(L: PLua_State): integer; cdecl;
 begin
   result:=0;
@@ -169,6 +184,11 @@ begin
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'doValueChange', addresslist_doValueChange);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'getSelectedRecord', addresslist_getSelectedRecord);
   luaclass_addClassFunctionToTable(L, metatable, userdata, 'setSelectedRecord', addresslist_setSelectedRecord);
+
+
+  luaclass_addClassFunctionToTable(L, metatable, userdata, 'disableAllWithoutExecute', addresslist_disableAllWithoutExecute);
+
+
 
   luaclass_addPropertyToTable(L, metatable, userdata, 'Count', addresslist_getCount, nil);
   luaclass_addPropertyToTable(L, metatable, userdata, 'SelectedRecord', addresslist_getSelectedRecord, addresslist_setSelectedRecord);

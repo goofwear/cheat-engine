@@ -6,7 +6,8 @@ interface
 
 uses
   Classes, SysUtils, FileUtil, LResources, Forms, Controls, Graphics, Dialogs,
-  StdCtrls, Menus, disassemblerviewunit, disassemblerviewlinesunit, windows;
+  StdCtrls, Menus, ExtCtrls, disassemblerviewunit, disassemblerviewlinesunit,
+  windows;
 
 type
 
@@ -18,18 +19,40 @@ type
     Button2: TButton;
     Button3: TButton;
     cbColorGroup: TComboBox;
+    cbShowStatusBar: TCheckBox;
     ColorDialog1: TColorDialog;
+    edtSpaceAboveLines: TEdit;
+    edtSpaceBelowLines: TEdit;
+    edtHexSpaceBetweenLines: TEdit;
+    edtJLThickness: TEdit;
+    edtJLSpacing: TEdit;
     FontDialog1: TFontDialog;
     FontDialog2: TFontDialog;
     GroupBox1: TGroupBox;
-    Label1: TLabel;
+    GroupBox2: TGroupBox;
+    GroupBox3: TGroupBox;
+    GroupBox4: TGroupBox;
+    GroupBox5: TGroupBox;
     Label2: TLabel;
-    lblHexExample: TLabel;
-    lblRegister: TLabel;
-    lblNormal: TLabel;
-    lblSymbol: TLabel;
+    Label3: TLabel;
+    Label4: TLabel;
+    Label5: TLabel;
+    Label6: TLabel;
+    Label7: TLabel;
+    lblConditionalJump: TLabel;
+    lblUnconditionalJump: TLabel;
+    lblCall: TLabel;
     lblHex: TLabel;
+    lblHexExample: TLabel;
+    lblNormal: TLabel;
+    lblRegister: TLabel;
+    lblSymbol: TLabel;
     miRestoreToDefaults: TMenuItem;
+    Panel1: TPanel;
+    Panel2: TPanel;
+    Panel3: TPanel;
+    Panel4: TPanel;
+    Panel5: TPanel;
     pmColors: TPopupMenu;
     procedure btnFontClick(Sender: TObject);
     procedure btnHexFontClick(Sender: TObject);
@@ -38,19 +61,39 @@ type
     procedure FormCreate(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure GroupBox1Click(Sender: TObject);
+    procedure GroupBox1MouseDown(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure GroupBox5Click(Sender: TObject);
+    procedure lblCallClick(Sender: TObject);
+    procedure lblConditionalJumpClick(Sender: TObject);
     procedure lblHexClick(Sender: TObject);
     procedure lblNormalClick(Sender: TObject);
     procedure lblRegisterClick(Sender: TObject);
     procedure lblSymbolClick(Sender: TObject);
+    procedure lblUnconditionalJumpClick(Sender: TObject);
     procedure miRestoreToDefaultsClick(Sender: TObject);
   private
     { private declarations }
     oldstate: TDisassemblerViewColorsState;
+    fspaceAboveLines: integer;
+    fspaceBelowLines: integer;
+    fhexspaceBetweenLines: integer;
+    fjlThickness: integer;
+    fjlSpacing: integer;
+    procedure setHexSpaceBetweenLines(s: integer);
+    procedure setSpaceAboveLines(s: integer);
+    procedure setSpaceBelowLines(s: integer);
+    procedure setjlThickness(t: integer);
+    procedure setjlSpacing(s: integer);
     procedure applyfont;
   public
     { public declarations }
     colors: TDisassemblerViewColors;
-
+    property hexSpaceBetweenLines: integer read fhexspaceBetweenLines write setHexSpaceBetweenLines;
+    property spaceAboveLines: integer read fspaceAboveLines write setSpaceAboveLines;
+    property spaceBelowLines: integer read fspaceBelowLines write setSpaceBelowLines;
+    property jlThickness: integer read fjlThickness write setjlThickness;
+    property jlSpacing: integer read fjlSpacing write setjlSpacing;
   end; 
 
 implementation
@@ -66,6 +109,11 @@ resourcestring
   rsRegisterColor = 'Register color';
   rsSymbolColor = 'Symbol color';
 
+  rsConditionalJumpColor = 'Conditional jump color';
+  rsUnconditionalJumpColor = 'Unconditional jump color';
+  rsCallColor = 'Call color';
+
+
   rsDCNormal='Normal';
   rsDCHighlighted='Highlighted';
   rsDCHighlightedSecondary='Highlighted secondary';
@@ -75,6 +123,36 @@ resourcestring
   rsDCUltimap2='Ultimap2';
   rsDCHighlightedUltimap2='Highlighted Ultimap2';
   rsDCHighlightedUltimap2Secondary='Highlighted Ultimap2 secondary';
+
+procedure TfrmMemviewPreferences.setHexSpaceBetweenLines(s: integer);
+begin
+  edtHexSpaceBetweenLines.text:=inttostr(s);
+  fhexspaceBetweenLines:=s;
+end;
+
+procedure TfrmMemviewPreferences.setSpaceAboveLines(s: integer);
+begin
+  edtSpaceAboveLines.text:=inttostr(s);
+  fspaceAboveLines:=s;
+end;
+
+procedure TfrmMemviewPreferences.setSpaceBelowLines(s: integer);
+begin
+  edtSpaceBelowLines.text:=inttostr(s);
+  fspaceBelowLines:=s;
+end;
+
+procedure TfrmMemviewPreferences.setjlThickness(t: integer);
+begin
+  edtJLThickness.text:=inttostr(t);
+  fjlThickness:=t;
+end;
+
+procedure TfrmMemviewPreferences.setjlSpacing(s: integer);
+begin
+  edtJLSpacing.text:=inttostr(s);
+  fjlThickness:=s;
+end;
 
 procedure TfrmMemviewPreferences.applyfont;
 begin
@@ -110,11 +188,36 @@ begin
 end;
 
 procedure TfrmMemviewPreferences.FormShow(Sender: TObject);
+var
+  i: integer;
+  extrasize: integer;
+  cbi: TComboboxInfo;
 begin
   applyfont;
 
   oldstate:=csUndefined;
   cbColorGroupChange(cbColorGroup);
+
+  //
+  cbi.cbSize:=sizeof(cbi);
+  if GetComboBoxInfo(cbColorGroup.handle, @cbi) then
+    extrasize:=cbi.rcButton.Right-cbi.rcButton.Left+cbi.rcItem.Left
+  else
+    extrasize:=16;
+
+  i:=Canvas.TextWidth(rsDCNormal)+extrasize;
+  i:=max(i, Canvas.TextWidth(rsDCHighlighted)+extrasize);
+  i:=max(i, Canvas.TextWidth(rsDCHighlightedSecondary)+extrasize);
+  i:=max(i, Canvas.TextWidth(rsDCBreakpoint)+extrasize);
+  i:=max(i, Canvas.TextWidth(rsDCHighlightedBreakpoint)+extrasize);
+  i:=max(i, Canvas.TextWidth(rsDCHighlightedBreakpointSecondary)+extrasize);
+  i:=max(i, Canvas.TextWidth(rsDCUltimap2)+extrasize);
+  i:=max(i, Canvas.TextWidth(rsDCHighlightedUltimap2)+extrasize);
+  i:=max(i, Canvas.TextWidth(rsDCHighlightedUltimap2Secondary)+extrasize);
+
+  btnFont.Constraints.MinWidth:=i;
+  cbColorGroup.Constraints.MinWidth:=i;
+  btnHexFont.Constraints.MinWidth:=i;
 end;
 
 procedure TfrmMemviewPreferences.GroupBox1Click(Sender: TObject);
@@ -123,6 +226,34 @@ begin
   colordialog1.Title:=rsBackgroundColor;
   if colordialog1.execute then
     groupbox1.color:=colordialog1.Color;
+end;
+
+procedure TfrmMemviewPreferences.GroupBox1MouseDown(Sender: TObject;
+  Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+begin
+  groupbox1.OnClick(sender);
+end;
+
+procedure TfrmMemviewPreferences.GroupBox5Click(Sender: TObject);
+begin
+
+end;
+
+procedure TfrmMemviewPreferences.lblCallClick(Sender: TObject);
+begin
+  colordialog1.Color:=lblCall.font.color;
+  colordialog1.Title:=rsCallColor;
+  if colordialog1.execute then
+    lblCall.font.color:=colordialog1.Color;
+end;
+
+
+procedure TfrmMemviewPreferences.lblConditionalJumpClick(Sender: TObject);
+begin
+  colordialog1.Color:=lblConditionalJump.font.color;
+  colordialog1.Title:=rsConditionalJumpColor;
+  if colordialog1.execute then
+    lblConditionalJump.font.color:=colordialog1.Color;
 end;
 
 procedure TfrmMemviewPreferences.lblHexClick(Sender: TObject);
@@ -156,6 +287,15 @@ begin
   if colordialog1.execute then
     lblSymbol.font.color:=colordialog1.Color;
 end;
+
+procedure TfrmMemviewPreferences.lblUnconditionalJumpClick(Sender: TObject);
+begin
+  colordialog1.Color:=lblunConditionalJump.font.color;
+  colordialog1.Title:=rsunConditionalJumpColor;
+  if colordialog1.execute then
+    lblunConditionalJump.font.color:=colordialog1.Color;
+end;
+
 
 procedure TfrmMemviewPreferences.miRestoreToDefaultsClick(Sender: TObject);
 begin
@@ -224,6 +364,13 @@ end;
 
 procedure TfrmMemviewPreferences.Button2Click(Sender: TObject);
 begin
+  fhexspaceBetweenLines:=strtoint(edtHexSpaceBetweenLines.Text);
+  fspaceAboveLines:=strtoint(edtSpaceAboveLines.Text);
+  fspaceBelowLines:=strtoint(edtSpaceBelowLines.Text);
+  fjlThickness:=strtoint(edtJLThickness.Text);
+  fjlSpacing:=strtoint(edtJLSpacing.Text);
+  fhexSpaceBetweenLines:=strtoint(edtHexSpaceBetweenLines.text);
+
   cbColorGroupChange(cbColorGroup); //apply changes of the current page first
   modalresult:=mrok;
 end;

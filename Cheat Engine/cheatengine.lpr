@@ -7,36 +7,35 @@ uses
   {$IFDEF UNIX}{$IFDEF UseCThreads}
   cthreads,
   {$ENDIF}{$ENDIF}
-  Interfaces, // this includes the LCL widgetset
-  controls, sysutils, Forms, LazUTF8, dialogs, MainUnit, CEDebugger, NewKernelHandler,
-  CEFuncProc, ProcessHandlerUnit, symbolhandler, Assemblerunit, hypermode,
-  byteinterpreter, addressparser, autoassembler, ProcessWindowUnit, MainUnit2,
-  Filehandler, dbvmPhysicalMemoryHandler, frameHotkeyConfigUnit,
-  formsettingsunit, HotkeyHandler, formhotkeyunit, AdvancedOptionsUnit,
-  inputboxtopunit, plugin, pluginexports, tlgUnit, aboutunit,
-  frmProcesswatcherExtraUnit, frmProcessWatcherUnit, ModuleSafetyUnit,
-  frmExcludeHideUnit, HotKeys, TypePopup, CommentsUnit, FoundCodeUnit,
-  foundlisthelper, unrandomizer, SaveFirstScan, savedscanhandler, memscan,
-  KernelDebugger, formDifferentBitSizeUnit,
-  formAddressChangeUnit, Changeoffsetunit, speedhack2, formPointerOrPointeeUnit,
-  AccessCheck, formmemoryregionsunit, OpenSave, formProcessInfo,
-  frmautoinjectunit, MenuItemExtra, MemoryBrowserFormUnit,
-  disassemblerviewlinesunit, disassemblerviewunit, PasteTableentryFRM,
-  frmBreakpointlistunit, DissectCodeThread, DissectCodeunit, Valuechange,
-  FindWindowUnit, stacktrace2, frmstacktraceunit, frmBreakThreadUnit,
-  FormDebugStringsUnit, frmDissectwindowUnit, frmCapturedTimersUnit,
-  frmEnumerateDLLsUnit, frmThreadlistunit, frmMemoryAllocHandlerUnit,
-  circularBuffer, PEInfoFunctions, PEInfounit, FileMapping, frmFindstaticsUnit,
-  frmModifyRegistersUnit, frmHeapsUnit, savedisassemblyfrm,
-  frmSaveMemoryRegionUnit, frmLoadMemoryunit, formAddToCodeList,
-  frmFillMemoryUnit, frmCodecaveScannerUnit, frmSelectionlistunit,
-  symbolconfigunit, frmFloatingPointPanelUnit, frmTracerUnit, DriverList,
-  frmRegistersunit, formChangedAddresses, frmGDTunit, frmIDTunit,
-  frmDisassemblyscanunit, frmReferencedStringsUnit, StructuresAddElementfrm,
-  Structuresfrm, PointerscannerSettingsFrm, simpleaobscanner,
-  PointerscanresultReader, pointervaluelist, rescanhelper, pointerscannerfrm,
-  VirtualMemory, ValueFinder, frmRescanPointerUnit, SyncObjs2,
-  ManualModuleLoader, SynHighlighterAA, APIhooktemplatesettingsfrm,
+  Interfaces, {CEInterfaces,} // this includes the LCL widgetset
+  controls, sysutils, Forms, LazUTF8, dialogs, MainUnit, CEDebugger,
+  NewKernelHandler, CEFuncProc, ProcessHandlerUnit, symbolhandler,
+  Assemblerunit, hypermode, byteinterpreter, addressparser, autoassembler,
+  ProcessWindowUnit, MainUnit2, Filehandler, dbvmPhysicalMemoryHandler,
+  frameHotkeyConfigUnit, formsettingsunit, HotkeyHandler, formhotkeyunit,
+  AdvancedOptionsUnit, inputboxtopunit, plugin, pluginexports, tlgUnit,
+  aboutunit, frmProcesswatcherExtraUnit, frmProcessWatcherUnit,
+  ModuleSafetyUnit, frmExcludeHideUnit, HotKeys, TypePopup, CommentsUnit,
+  FoundCodeUnit, foundlisthelper, unrandomizer, SaveFirstScan, savedscanhandler,
+  memscan, KernelDebugger, formDifferentBitSizeUnit, formAddressChangeUnit,
+  Changeoffsetunit, speedhack2, formPointerOrPointeeUnit, AccessCheck,
+  formmemoryregionsunit, OpenSave, formProcessInfo, frmautoinjectunit,
+  MenuItemExtra, MemoryBrowserFormUnit, disassemblerviewlinesunit,
+  disassemblerviewunit, PasteTableentryFRM, frmBreakpointlistunit,
+  DissectCodeThread, DissectCodeunit, Valuechange, FindWindowUnit, stacktrace2,
+  frmstacktraceunit, frmBreakThreadUnit, FormDebugStringsUnit,
+  frmDissectwindowUnit, frmCapturedTimersUnit, frmEnumerateDLLsUnit,
+  frmThreadlistunit, frmMemoryAllocHandlerUnit, circularBuffer, PEInfoFunctions,
+  PEInfounit, FileMapping, frmFindstaticsUnit, frmModifyRegistersUnit,
+  frmHeapsUnit, savedisassemblyfrm, frmSaveMemoryRegionUnit, frmLoadMemoryunit,
+  formAddToCodeList, frmFillMemoryUnit, frmCodecaveScannerUnit,
+  frmSelectionlistunit, symbolconfigunit, frmFloatingPointPanelUnit,
+  frmTracerUnit, DriverList, frmRegistersunit, formChangedAddresses, frmGDTunit,
+  frmIDTunit, frmDisassemblyscanunit, frmReferencedStringsUnit,
+  StructuresAddElementfrm, Structuresfrm, PointerscannerSettingsFrm,
+  simpleaobscanner, PointerscanresultReader, pointervaluelist, rescanhelper,
+  pointerscannerfrm, VirtualMemory, ValueFinder, frmRescanPointerUnit,
+  SyncObjs2, ManualModuleLoader, SynHighlighterAA, APIhooktemplatesettingsfrm,
   frmAAEditPrefsUnit, disassembler, hexviewunit, guisafecriticalsection,
   debugeventhandler, formFoundcodeListExtraUnit, debuggertypedefinitions,
   addresslist, MemoryRecordUnit, ThreadlistExFRM, windows7taskbar, tablist,
@@ -92,7 +91,8 @@ uses
   MemoryQuery, pointerparser, GnuAssembler, binutils, dbvmLoadManual, mikmod,
   frmEditHistoryUnit, LuaInternet, xinput, frmUltimap2Unit, cpuidunit, libipt,
   DPIHelper, Graphics, fontSaveLoadRegistry, registry, frmWatchlistUnit,
-frmWatchListAddEntryUnit, frmBusyUnit, FindDialogFix;
+  frmWatchListAddEntryUnit, frmBusyUnit, FindDialogFix, LuaCustomType, LuaSQL,
+  bCrypt, feces, askToRunLuaScript;
 
 {$R cheatengine.res}
 //{$R manifest.res}  //lazarus now has this build in
@@ -231,7 +231,7 @@ var
   ff: TFormFucker;
   r: TRegistry;
 begin
-  Application.Title:='Cheat Engine 6.6';
+  Application.Title:='Cheat Engine 6.7';
   Application.Initialize;
 
   overridefont:=nil;
@@ -264,7 +264,8 @@ begin
             LoadFontFromRegistry(overridefont,r);
 
             ff:=TFormFucker.Create;
-            screen.AddHandlerFormAdded(@ff.addFormEvent)
+            screen.AddHandlerFormAdded(@ff.addFormEvent);
+
           end;
         end;
       end;

@@ -14,7 +14,7 @@ uses  sysutils, ProcessHandlerUnit;
 uses dialogs,LCLIntf,sysutils,imagehlp, ProcessHandlerUnit;
 {$endif}
 
-const opcodecount=1103; //I wish there was a easier way than to handcount
+const opcodecount=1104; //I wish there was a easier way than to handcount
 
 
 
@@ -105,6 +105,8 @@ type topcode=record
   norexw: boolean;
   invalidin64bit: boolean;
   invalidin32bit: boolean;
+  canDoAddressSwitch: boolean; //does it support the 0x67 address switch (e.g lea)
+  defaulttype: boolean;
  // RexPrefixOffset: byte; //if specified specifies which byte should be used for the rexw (e.g f3 before rex )
 end;
 
@@ -711,8 +713,8 @@ const opcodes: array [1..opcodecount] of topcode =(
   (mnemonic:'LDS';opcode1:eo_reg;paramtype1:par_r16;paramtype2:par_m16;bytes:2;bt1:$66;bt2:$c5),
   (mnemonic:'LDS';opcode1:eo_reg;paramtype1:par_r32;paramtype2:par_m32;bytes:1;bt1:$c5),
 
-  (mnemonic:'LEA';opcode1:eo_reg;paramtype1:par_r16;paramtype2:par_m16;bytes:2;bt1:$66;bt2:$8d),
-  (mnemonic:'LEA';opcode1:eo_reg;paramtype1:par_r32;paramtype2:par_m32;bytes:1;bt1:$8d),
+  (mnemonic:'LEA';opcode1:eo_reg;paramtype1:par_r16;paramtype2:par_m16;bytes:2;bt1:$66;bt2:$8d;canDoAddressSwitch:true),
+  (mnemonic:'LEA';opcode1:eo_reg;paramtype1:par_r32;paramtype2:par_m32;bytes:1;bt1:$8d;canDoAddressSwitch:true),
   (mnemonic:'LEAVE';bytes:1;bt1:$c9),
 
   (mnemonic:'LES';opcode1:eo_reg;paramtype1:par_r16;paramtype2:par_rm16;bytes:2;bt1:$66;bt2:$c4),
@@ -851,7 +853,8 @@ const opcodes: array [1..opcodecount] of topcode =(
   (mnemonic:'MOVQ';opcode1:eo_reg;paramtype1:par_xmm_m64;paramtype2:par_xmm;bytes:3;bt1:$66;bt2:$0f;bt3:$d6),
 
   (mnemonic:'MOVQ';opcode1:eo_reg;paramtype1:par_mm;paramtype2:par_rm32;bytes:2;bt1:$0f;bt2:$6e),
-  (mnemonic:'MOVQ';opcode1:eo_reg;paramtype1:par_xmm;paramtype2:par_rm32;bytes:3;bt1:$f3;bt2:$0f;bt3:$7e),
+  (mnemonic:'MOVQ';opcode1:eo_reg;paramtype1:par_xmm;paramtype2:par_rm32;bytes:3;bt1:$66;bt2:$0f;bt3:$6e),
+  (mnemonic:'MOVQ';opcode1:eo_reg;paramtype1:par_rm32;paramtype2:par_xmm;bytes:3;bt1:$66;bt2:$0f;bt3:$7e),
 
 
 
@@ -1350,38 +1353,38 @@ const opcodes: array [1..opcodecount] of topcode =(
   (mnemonic:'SCASW';bytes:2;bt1:$66;bt2:$af),
 
 
-  (mnemonic:'SETA';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$97),
-  (mnemonic:'SETAE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$93),
-  (mnemonic:'SETB';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$92),
-  (mnemonic:'SETBE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$96),
-  (mnemonic:'SETC';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$92),
-  (mnemonic:'SETE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$94),
-  (mnemonic:'SETG';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9f),
-  (mnemonic:'SETGE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9d),
-  (mnemonic:'SETL';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9c),
-  (mnemonic:'SETLE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9e),
-  (mnemonic:'SETNA';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$96),
+  (mnemonic:'SETA';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$97;defaulttype:true),
+  (mnemonic:'SETAE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$93;defaulttype:true),
+  (mnemonic:'SETB';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$92;defaulttype:true),
+  (mnemonic:'SETBE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$96;defaulttype:true),
+  (mnemonic:'SETC';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$92;defaulttype:true),
+  (mnemonic:'SETE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$94;defaulttype:true),
+  (mnemonic:'SETG';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9f;defaulttype:true),
+  (mnemonic:'SETGE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9d;defaulttype:true),
+  (mnemonic:'SETL';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9c;defaulttype:true),
+  (mnemonic:'SETLE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9e;defaulttype:true),
+  (mnemonic:'SETNA';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$96;defaulttype:true),
 
-  (mnemonic:'SETNAE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$92),
-  (mnemonic:'SETNB';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$93),
-  (mnemonic:'SETNBE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$97),
-  (mnemonic:'SETNC';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$93),
-  (mnemonic:'SETNE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$95),
-  (mnemonic:'SETNG';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9e),
-  (mnemonic:'SETNGE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9c),
-  (mnemonic:'SETNL';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9d),
-  (mnemonic:'SETNLE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9f),
-  (mnemonic:'SETNO';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$91),
-  (mnemonic:'SETNP';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9b),
+  (mnemonic:'SETNAE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$92;defaulttype:true),
+  (mnemonic:'SETNB';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$93;defaulttype:true),
+  (mnemonic:'SETNBE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$97;defaulttype:true),
+  (mnemonic:'SETNC';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$93;defaulttype:true),
+  (mnemonic:'SETNE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$95;defaulttype:true),
+  (mnemonic:'SETNG';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9e;defaulttype:true),
+  (mnemonic:'SETNGE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9c;defaulttype:true),
+  (mnemonic:'SETNL';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9d;defaulttype:true),
+  (mnemonic:'SETNLE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9f;defaulttype:true),
+  (mnemonic:'SETNO';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$91;defaulttype:true),
+  (mnemonic:'SETNP';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9b;defaulttype:true),
 
-  (mnemonic:'SETNS';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$99),
-  (mnemonic:'SETNZ';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$95),
-  (mnemonic:'SETO';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$90),
-  (mnemonic:'SETP';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9a),
-  (mnemonic:'SETPE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9a),
-  (mnemonic:'SETPO';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9b),
-  (mnemonic:'SETS';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$98),
-  (mnemonic:'SETZ';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$94),
+  (mnemonic:'SETNS';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$99;defaulttype:true),
+  (mnemonic:'SETNZ';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$95;defaulttype:true),
+  (mnemonic:'SETO';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$90;defaulttype:true),
+  (mnemonic:'SETP';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9a;defaulttype:true),
+  (mnemonic:'SETPE';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9a;defaulttype:true),
+  (mnemonic:'SETPO';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$9b;defaulttype:true),
+  (mnemonic:'SETS';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$98;defaulttype:true),
+  (mnemonic:'SETZ';opcode1:eo_reg;paramtype1:par_rm8;bytes:2;bt1:$0f;bt2:$94;defaulttype:true),
 
   (mnemonic:'SFENCE';bytes:3;bt1:$0f;bt2:$ae;bt3:$f8),
 
@@ -1455,7 +1458,7 @@ const opcodes: array [1..opcodecount] of topcode =(
   (mnemonic:'SUB';opcode1:eo_iw;paramtype1:par_AX;paramtype2:par_imm16;bytes:2;bt1:$66;bt2:$2d),
   (mnemonic:'SUB';opcode1:eo_id;paramtype1:par_EAX;paramtype2:par_imm32;bytes:1;bt1:$2d),
   (mnemonic:'SUB';opcode1:eo_reg5;opcode2:eo_ib;paramtype1:par_rm8;paramtype2:par_imm8;bytes:1;bt1:$80),
-  (mnemonic:'SUB';opcode1:eo_reg5;opcode2:eo_iw;paramtype1:par_rm16;paramtype2:par_imm16;bytes:2;bt1:$66;bt2:$80),
+  (mnemonic:'SUB';opcode1:eo_reg5;opcode2:eo_iw;paramtype1:par_rm16;paramtype2:par_imm16;bytes:2;bt1:$66;bt2:$81),
   (mnemonic:'SUB';opcode1:eo_reg5;opcode2:eo_id;paramtype1:par_rm32;paramtype2:par_imm32;bytes:1;bt1:$81),
   (mnemonic:'SUB';opcode1:eo_reg5;opcode2:eo_ib;paramtype1:par_rm16;paramtype2:par_imm8;bytes:2;bt1:$66;bt2:$83; signed: true),
   (mnemonic:'SUB';opcode1:eo_reg5;opcode2:eo_ib;paramtype1:par_rm32;paramtype2:par_imm8;bytes:1;bt1:$83; signed: true),
@@ -1604,7 +1607,7 @@ type TSingleLineAssembler=class
     RexPrefixLocation: integer; //index into the bytes array
     relativeAddressLocation: integer; //index into the bytes array containing the start of th relative 4 byte address
     actualdisplacement: qword;
-
+    needsAddressSwitchPrefix: boolean;
 
     function getRex_W: boolean;
     procedure setRex_W(state: boolean);
@@ -1695,7 +1698,9 @@ procedure unregisterAssembler(id: integer);
 begin
   if id<length(ExtraAssemblers) then
   begin
+    {$ifndef unix}
     CleanupLuaCall(TMethod(ExtraAssemblers[id]));
+    {$endif}
     ExtraAssemblers[id]:=nil;
   end;
 end;
@@ -2301,7 +2306,7 @@ begin
       val('$'+tokens[i],j,err);
       if (err<>0) and (getreg(tokens[i],false)=-1) then    //not a hexadecimal value and not a register
       begin
-        temp:=inttohex(symhandler.getaddressfromname(tokens[i], false, haserror),8);
+        temp:=inttohex(symhandler.getaddressfromname(tokens[i], false, haserror,nil),8);
         if not haserror then
           tokens[i]:=temp //can be rewritten as a hexadecimal
         else
@@ -2671,7 +2676,21 @@ begin
     if pos('R13',reg)>0 then setsibindex(sib,13) else
     if pos('R14',reg)>0 then setsibindex(sib,14) else
     if pos('R15',reg)>0 then setsibindex(sib,15) else
-      raise exception.Create(rsWTFIsA+reg)
+    begin
+      //in case addressswitch is needed
+      if pos('EAX',reg)>0 then setsibindex(sib,0) else
+      if pos('ECX',reg)>0 then setsibindex(sib,1) else
+      if pos('EDX',reg)>0 then setsibindex(sib,2) else
+      if pos('EBX',reg)>0 then setsibindex(sib,3) else
+      if pos('ESP',reg)>0 then setsibindex(sib,4) else
+      if pos('EBP',reg)>0 then setsibindex(sib,5) else
+      if pos('ESI',reg)>0 then setsibindex(sib,6) else
+      if pos('EDI',reg)>0 then setsibindex(sib,7) else
+        raise exception.Create(rsWTFIsA+reg);
+
+      //still here, so I guess so
+      needsAddressSwitchPrefix:=true;
+    end;
 
   end;
 end;
@@ -3300,8 +3319,12 @@ var tokens: ttokens;
 
     b: byte;
     br: PTRUINT;
+    canDoAddressSwitch: boolean;
 
 begin
+  needsAddressSwitchPrefix:=false;
+
+
   setlength(bytes,0);
   is64bit:=processhandler.is64Bit;
 
@@ -3764,6 +3787,8 @@ begin
         paramtype2:=gettokentype(parameter2,parameter3);
     end;
 
+
+    canDoAddressSwitch:=opcodes[j].canDoAddressSwitch;
 
 
     case opcodes[j].paramtype1 of
@@ -4902,7 +4927,7 @@ begin
         end;
       end;
 
-      par_rm8: if (isrm8(paramtype1)) then
+      par_rm8: if (isrm8(paramtype1) or (ismemorylocationdefault(parameter1) and opcodes[j].defaulttype) ) then
       begin
         //r/m8,
         if (opcodes[j].paramtype2=par_noparam) and (parameter2='') then
@@ -5796,9 +5821,6 @@ begin
       //insert rex prefix if needed
       if processhandler.is64bit then
       begin
-
-
-
         if opcodes[j].norexw then
           REX_W:=false;
 
@@ -5837,7 +5859,25 @@ begin
 
         end;
 
+
+
+
       end;
+    end;
+
+    if needsAddressSwitchPrefix then //add it
+    begin
+      if canDoAddressSwitch then
+      begin
+        //put 0x67 in front
+        setlength(bytes,length(bytes)+1);
+        for i:=length(bytes)-1 downto 1 do
+          bytes[i]:=bytes[i-1];
+
+        bytes[0]:=$67;
+      end
+      else
+        raise exception.create('Invalid address');
     end;
   end;
 end;

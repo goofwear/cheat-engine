@@ -34,6 +34,7 @@ resourcestring
 type TProcessListInfo=record
   processID: dword;
   processIcon: HICON;
+  issystemprocess: boolean;
 end;
 PProcessListInfo=^TProcessListInfo;
 
@@ -68,9 +69,16 @@ begin
     begin
       ProcessListInfo:= pointer( processlist.Objects[i]);
 {$ifdef windows}
-      if ProcessListInfo.processIcon>0 then
-        DestroyIcon(ProcessListInfo.processIcon);
+      if ProcessListInfo^.processIcon>0 then
+      begin
+        if ProcessListInfo^.processID<>GetCurrentProcessId then
+          DestroyIcon(ProcessListInfo^.processIcon);
+
+        ProcessListInfo^.processIcon:=0;
+      end;
 {$endif}
+
+
       freemem(ProcessListInfo);
 
       processlist.Objects[i]:=nil;
@@ -136,10 +144,11 @@ begin
     Check:=Process32First(SnapHandle,ProcessEntry);
     while check do
     begin
+      s:=GetFirstModuleName(processentry.th32ProcessID);
+
 {$ifdef windows}
       if (noprocessinfo=false) and getprocessicons then
       begin
-        s:='';
 
 
         HI:=ExtractIcon(hinstance,ProcessEntry.szExeFile,0);
@@ -150,7 +159,7 @@ begin
           //alternative method:
           if (processentry.th32ProcessID>0) and (uppercase(copy(ExtractFileName(ProcessEntry.szExeFile), 1,3))<>'AVG') then //february 2014: AVG freezes processes that do createtoolhelp32snapshot on it's processes for several seconds. AVG has multiple processes...
           begin
-            s:=GetFirstModuleName(processentry.th32ProcessID);
+            //s:=GetFirstModuleName(processentry.th32ProcessID);
            // OutputDebugString(s);
             HI:=ExtractIcon(hinstance,pchar(s),0);
           end;
@@ -171,6 +180,15 @@ begin
             getmem(ProcessListInfo,sizeof(TProcessListInfo));
             ProcessListInfo.processID:=processentry.th32ProcessID;
             ProcessListInfo.processIcon:=HI;
+
+            s:=lowercase(s);
+
+          {  if pos('cheatengine',lowercase(ProcessEntry.szExeFile))>0 then
+            begin
+              beep;
+            end;    }
+
+            ProcessListInfo.issystemprocess:=(ProcessListInfo.processID=4) or (pos(lowercase(windowsdir),s)>0) or (pos('system32',s)>0);
           end;
           {$endif}
 
@@ -220,8 +238,13 @@ begin
       if processlist.Items.Objects[i]<>nil then
       begin
         pli:=pointer(processlist.Items.Objects[i]);
-        if pli.processIcon>0 then
-          DestroyIcon(pli.processIcon);
+        if pli^.processIcon>0 then
+        begin
+          if pli^.processID<>GetCurrentProcessId then
+            DestroyIcon(pli^.processIcon);
+
+          pli^.processIcon:=0;
+        end;
         freemem(pli);
       end;
 

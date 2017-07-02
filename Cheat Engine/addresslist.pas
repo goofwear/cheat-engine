@@ -22,7 +22,7 @@ type
   TDropByListviewEvent=procedure(sender: TObject; node: TTreenode; attachmode: TNodeAttachMode) of object;
   TAutoAssemblerEditEvent=procedure(sender: TObject; memrec: TMemoryRecord) of object;
   TCompareRoutine=function(a: tmemoryrecord; b: tmemoryrecord): integer of object;
-
+  TMemRecChangeEvent=function(sender: TObject; memrec: TMemoryRecord):boolean of object;
 
 
 
@@ -57,6 +57,15 @@ type
     fExpandSignColor: TColor;
     fDecreaseArrowColor: TColor;
     fIncreaseArrowColor: TColor;
+
+    fOnDescriptionChange: TMemRecChangeEvent;
+    fOnAddressChange: TMemRecChangeEvent;
+    fOnTypeChange: TMemRecChangeEvent;
+    fOnValueChange: TMemRecChangeEvent;
+
+    animationtimer: TTimer;
+    expandsignsize: integer;
+    procedure doAnimation(sender: TObject);
 
     function getTreeNodes: TTreenodes;
     procedure setTreeNodes(t: TTreenodes);
@@ -144,6 +153,8 @@ type
     procedure doTypeChange;
     procedure doValueChange;
 
+    procedure disableAllWithoutExecute;
+
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     property Items: TTreeNodes read getTreeNodes write SetTreeNodes;
@@ -161,6 +172,7 @@ type
 
     property headers: THeaderControl read header;
   published
+
     property Count: Integer read GetCount;
     property SelCount: Integer read GetSelCount;
     property SelectedRecord: TMemoryRecord read getSelectedRecord write setSelectedRecord;
@@ -176,12 +188,17 @@ type
     property ExpandSignColor: TColor read fExpandSignColor write fExpandSignColor;
     property IncreaseArrowColor: TColor read fIncreaseArrowColor write fIncreaseArrowColor;
     property DecreaseArrowColor: TColor read fDecreaseArrowColor write fDecreaseArrowColor;
+
+    property OnDescriptionChange: TMemRecChangeEvent read fOnDescriptionChange write fOnDescriptionChange;
+    property OnAddressChange: TMemRecChangeEvent read fOnAddressChange write fOnAddressChange;
+    property OnTypeChange: TMemRecChangeEvent read fOnTypeChange write fOnTypeChange;
+    property OnValueChange: TMemRecChangeEvent read fOnValueChange write fOnValueChange;
   end;
 
 implementation
 
 uses dialogs, formAddressChangeUnit, TypePopup, PasteTableentryFRM, mainunit,
-  ProcessHandlerUnit, frmEditHistoryUnit;
+  ProcessHandlerUnit, frmEditHistoryUnit, globals;
 
 resourcestring
   rsDoYouWantToDeleteTheSelectedAddress = 'Do you want to delete the selected address?';
@@ -204,7 +221,8 @@ resourcestring
   rsALAutoAssembleScritp = 'Auto Assemble script';
 
 procedure TTreeviewWithScroll.MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
-var n: TTreenode;
+var
+  n: TTreenode;
 begin
   //retarded solution for dealing with the expand click
   n:=GetNodeAt(X, Y);
@@ -227,9 +245,9 @@ end;
 procedure TAddresslist.clear;
 var i: integer;
 begin
-  //first check if it's being edited
+  //first check if it's being edited/or busy
   for i:=0 to count-1 do
-    if (MemRecItems[i].isBeingEdited) then exit;
+    if (MemRecItems[i].isBeingEdited) or (memrecitems[i].AsyncProcessing) then exit;
 
   //still here so nothing is being edited, so, delete
   while count>0 do
@@ -394,7 +412,7 @@ begin
     i:=0;
     while i<count do
     begin
-      if MemRecItems[i].isSelected and (MemRecItems[i].isBeingEdited=false) then
+      if MemRecItems[i].isSelected and (MemRecItems[i].isBeingEdited=false) and (MemRecItems[i].AsyncProcessing=false) then
         MemRecItems[i].Free //Free also cleans up it's associated treenode, and all it's children
       else
         inc(i);
@@ -603,6 +621,8 @@ begin
               if insertAfter<>nil then
                 memrec.treenode.MoveTo(insertafter, naInsertBehind);
 
+              insertAfter:=memrec.treenode;
+
               //fill the entry with the node info
               memrec.setXMLnode(currentEntry);
 
@@ -789,6 +809,13 @@ begin
       memrec.Extra.stringData.length:=length;
     end;
 
+    vtCodePageString:
+    begin
+      memrec.vartype:=vtString;
+      memrec.extra.stringData.codepage:=true;
+      memrec.Extra.stringData.length:=length;
+    end;
+
     vtBinary:
     begin
       memrec.Extra.bitData.Bit:=startbit;
@@ -838,17 +865,18 @@ procedure TAddresslist.doDescriptionChange;
 begin
   if treeview.selected<>nil then
     descriptiondblclick(treeview.selected);
-
 end;
 
 procedure TAddresslist.doAddressChange;
 begin
-  if treeview.selected<>nil then addressdblclick(treeview.selected);
+  if treeview.selected<>nil then
+    addressdblclick(treeview.selected);
 end;
 
 procedure TAddresslist.doTypeChange;
 begin
-  if treeview.selected<>nil then typedblclick(treeview.selected);
+  if treeview.selected<>nil then
+    typedblclick(treeview.selected);
 end;
 
 procedure TAddresslist.doValueChange;
@@ -863,11 +891,21 @@ begin
 end;
 
 
+procedure TAddresslist.disableAllWithoutExecute;
+var i: integer;
+begin
+  for i := 0 to Count - 1 do
+    if (MemRecItems[i].VarType = vtAutoAssembler) and (MemRecItems[i].active) then
+      MemRecItems[i].disablewithoutexecute;
+end;
 
 procedure TAddresslist.descriptiondblclick(node: TTreenode);
 var i: integer;
     description: string;
 begin
+  if assigned(fOnDescriptionChange) and fOnDescriptionChange(self,tmemoryrecord(node.data)) then exit;
+
+
   description:=tmemoryrecord(node.data).description;
 
   if InputQuery(rsChangeDescription, rsWhatWillBeTheNewDescription, description) then
@@ -891,6 +929,8 @@ end;
 
 procedure TAddresslist.addressdblclick(node: TTreenode);
 begin
+  if assigned(fOnAddressChange) and fOnAddressChange(self,tmemoryrecord(treeview.selected.Data)) then exit;
+
   if TMemoryRecord(node.data).isGroupHeader then exit;
 
   with TFormaddresschange.Create(self) do
@@ -915,8 +955,11 @@ var
   CustomTypeName: string;
 begin
   TypeForm.RefreshCustomTypes;
-
   memrec:=TMemoryRecord(node.data);
+
+  if assigned(fOnTypeChange) and fOnTypeChange(self,memrec) then exit;
+
+
 
   if memrec.isGroupHeader then exit;
 
@@ -953,12 +996,14 @@ begin
       TypeForm.VarType.itemindex:=7;
       TypeForm.Edit1.text:=inttostr(memrec.Extra.stringData.length);
       typeform.cbunicode.checked:=memrec.Extra.stringData.unicode;
+      typeform.cbCodePage.checked:=memrec.Extra.stringData.codepage;
     end;
     vtByteArray:
     begin
       TypeForm.edit1.text:=inttostr(memrec.Extra.byteData.bytelength);
       TypeForm.VarType.itemindex:=8;
       Typeform.cbunicode.visible:=false;
+      Typeform.cbCodePage.visible:=false;
     end;
   end;
 
@@ -1067,6 +1112,10 @@ var
 
 begin
   memrec:=TMemoryRecord(node.data);
+
+  if assigned(fOnValueChange) and fOnValueChange(self,memrec) then exit;
+
+
   value:=memrec.GetValue;
 
   if (selcount=1) and (selectedRecord.VarType=vtAutoAssembler) then
@@ -1097,7 +1146,11 @@ procedure TAddresslist.ValueClick(node: TTreenode);
 var memrec: TMemoryrecord;
 begin
   memrec:=TMemoryRecord(node.data);
-  if (memrec.VarType<>vtAutoAssembler) and (selcount<=1) and (memrec.DropDownList.count=0) then
+  if assigned(fOnValueChange) and fOnValueChange(self,memrec) then exit;
+
+
+
+  if (memrec.VarType<>vtAutoAssembler) and (selcount<=1) and (memrec.DropDownCount=0) then
   begin
 
 
@@ -1132,8 +1185,8 @@ end;
 
 procedure TAddresslist.TreeviewDblClick(Sender: TObject);
 var
-  tvRect: TRect;
-  node: TTreenode;
+  textrect, linerect: TRect;
+  node, n: TTreenode;
   i: integer;
   p: tpoint;
 begin
@@ -1144,6 +1197,20 @@ begin
   begin
     //at least something was clicked
 
+    textrect:=node.DisplayRect(true);
+    linerect:=node.DisplayRect(false);
+
+    n:=node;
+    while n<>nil do
+    begin
+      if moManualExpandCollapse in  TMemoryRecord(n.data).Options then
+        inc(textrect.left,treeview.indent div 2);
+      n:=n.parent;
+    end;
+
+    // compare x with arrowEnd (arrowEnd = checkboxEnd+9 = ...; see TreeviewMouseDown)
+    // prevents double click
+    if p.x<=textrect.left+(linerect.bottom-linerect.top)+8 then exit;
 
     for i:=0 to header.Sections.count-1 do
       if inrange(p.x,header.Sections[i].Left,header.Sections[i].right) then
@@ -1189,8 +1256,13 @@ var
   n: ttreenode;
 
   i: integer;
+  p: tpoint;
 begin
 //  self.Parent;
+  p:=treeview.ScreenToClient(mouse.cursorpos);
+  x:=p.x;
+  y:=p.y;
+
   node:=treeview.GetNodeAt(x,y);
   if node<>nil then
   begin
@@ -1214,7 +1286,7 @@ begin
     if moManualExpandCollapse in mr.options then
     begin
       //check for expand/collapse sign click
-      if inrange(x, textrect.left, textrect.left+9) then
+      if inrange(x, textrect.left, textrect.left+expandsignsize) then
       begin
         treeview.OnCollapsing:=nil;
         if node.Expanded then
@@ -1665,6 +1737,37 @@ begin
   end;
 end;
 
+procedure TAddresslist.doAnimation(sender: TObject);
+var
+  i: integer;
+  updated: boolean;
+  start,stop: integer;
+begin
+  updated:=false;
+
+  if treeview.TopItem<>nil then
+    start:=treeview.TopItem.Index
+  else
+    start:=0;
+
+  if treeview.BottomItem<>nil then
+    stop:=treeview.BottomItem.Index
+  else
+    stop:=count-1;
+
+  for i:=start to stop do
+  begin
+    if TMemoryRecord(Treeview.items[i].data).isProcessing then
+    begin
+      memrecitems[i].treenode.Update;
+      updated:=true;
+    end;
+  end;
+
+  if not updated then
+    animationtimer.enabled:=false;
+end;
+
 procedure TAddresslist.AdvancedCustomDrawItem(Sender: TCustomTreeView; Node: TTreeNode; State: TCustomDrawState; Stage: TCustomDrawStage; var PaintImages, DefaultDraw: Boolean);
 var
   textrect: trect;
@@ -1683,10 +1786,16 @@ var
   linetop: integer;
 
   expandsign: Trect;
-  expandsignsize: integer;
+
   expandsignlineborderspace: integer;
 
   n: Ttreenode;
+  t:integer;
+  cx,cy: integer;
+  x,y: single;
+  r: single;
+
+  bordersize: integer;
 begin
   //multiselect implementation
 
@@ -1716,6 +1825,20 @@ begin
 
     if not memrec.visible then //don't render it
       exit;
+
+
+    bordersize:=1*trunc(fontmultiplication);
+
+    if expandsignsize=0 then
+    begin
+      expandsignsize:=treeview.indent div 2;
+      if expandsignsize mod 2=0 then
+        dec(expandsignsize);    //has to be uneven
+
+      if expandsignsize<9 then
+        expandsignsize:=9;
+    end;
+
 
 
     if memrec.isSelected then
@@ -1749,11 +1872,15 @@ begin
     while n<>nil do
     begin
       if moManualExpandCollapse in TMemoryRecord(n.Data).Options then
-        inc(textrect.left,9);
+        inc(textrect.left,expandsignsize+1);
 
 
       n:=n.Parent;
     end;
+
+    sender.canvas.Pen.JoinStyle:=pjsMiter;
+    sender.canvas.Pen.EndCap:=pecFlat;
+    sender.canvas.pen.Width:=1;
 
     if moManualExpandCollapse in memrec.Options then
     begin
@@ -1761,26 +1888,7 @@ begin
       oldpencolor:=sender.canvas.pen.color;
       sender.canvas.pen.color:=expandSignColor;
 
-      {
-      expandsign:=Rect(textrect.left, textrect.top+((textrect.bottom-textrect.top) div 2-4), textrect.left+9, textrect.top+((textrect.bottom-textrect.top) div 2+5));
-      sender.canvas.Rectangle(expandsign);
-      sender.canvas.MoveTo(expandsign.Left + 2, textrect.top+(textrect.bottom-textrect.top)  div 2);
-      sender.canvas.LineTo(expandsign.Right - 2, textrect.top+(textrect.bottom-textrect.top)  div 2);
 
-      if memrec.treenode.Expanded then
-      begin
-        sender.canvas.MoveTo(expandsign.left+4, expandsign.Top + 2);
-        sender.canvas.LineTo(expandsign.left+4, expandsign.Bottom - 2);
-      end;
-      inc(textrect.left,9);
-      }
-
-      expandsignsize:=treeview.indent div 2;
-      if expandsignsize mod 2=0 then
-        dec(expandsignsize);
-
-      if expandsignsize<9 then
-        expandsignsize:=9;
 
       expandsignlineborderspace:=expandsignsize div 4;
 
@@ -1790,11 +1898,15 @@ begin
 
       expandsign:=Rect(textrect.left, textrect.top+((textrect.bottom-textrect.top) div 2-(expandsignsize div 2)), textrect.left+expandsignsize, textrect.top+((textrect.bottom-textrect.top) div 2+(expandsignsize div 2))+1);
       sender.canvas.Rectangle(expandsign);
-      sender.canvas.MoveTo(expandsign.Left + expandsignlineborderspace, textrect.top+(textrect.bottom-textrect.top)  div 2);
-      sender.canvas.LineTo(expandsign.Right - expandsignlineborderspace, textrect.top+(textrect.bottom-textrect.top)  div 2);
+
+      //horizontal line
+      sender.canvas.MoveTo(expandsign.Left + expandsignlineborderspace, textrect.top+(textrect.bottom-textrect.top) div 2);
+      sender.canvas.LineTo(expandsign.Right - expandsignlineborderspace, textrect.top+(textrect.bottom-textrect.top) div 2);
+
 
       if memrec.treenode.Expanded then
       begin
+        //vertical line
         sender.canvas.MoveTo(expandsign.left+expandsignsize div 2, expandsign.Top + expandsignlineborderspace);
         sender.canvas.LineTo(expandsign.left+expandsignsize div 2, expandsign.Bottom - expandsignlineborderspace);
       end;
@@ -1803,63 +1915,134 @@ begin
       sender.canvas.pen.color:=oldpencolor;
     end;
 
+    sender.canvas.pen.Width:=bordersize;
+    sender.canvas.pen.EndCap:=pecFlat;
+
+
     //draw checkbox
     oldpencolor:=sender.canvas.pen.color;
-
-    if memrec.isSelected then
-      sender.canvas.pen.color:=checkboxSelectedColor
-    else
-      sender.canvas.pen.color:=checkboxColor;
-
     checkbox.Left:=textrect.left+1; //(header.Sections[0].Width div 2)-((linerect.bottom-linerect.top) div 2)+1;
     checkbox.Right:=checkbox.left+(linerect.bottom-linerect.top)-2; //(header.Sections[0].Width div 2)+((linerect.bottom-linerect.top) div 2)-1;
     checkbox.Top:=linerect.top+1;
     checkbox.Bottom:=linerect.bottom-1;
-    sender.Canvas.Rectangle(checkbox);
 
 
 
-    sender.canvas.pen.color:=oldpencolor;
-
-    if memrec.Active then //draw a check
+    if not memrec.AsyncProcessing then
     begin
-      oldpencolor:=sender.canvas.pen.color;
 
-      if memrec.isSelected then
-        sender.canvas.pen.color:=checkboxActiveSelectedColor
-      else
-        sender.canvas.pen.color:=checkboxActiveColor;
 
-      sender.canvas.Line(checkbox.left+1,checkbox.Top+1, checkbox.Right-1,checkbox.bottom-1);
-      sender.canvas.line(checkbox.right-1-1,checkbox.top+1, checkbox.left,checkbox.bottom-1);
+
 
       sender.canvas.pen.color:=oldpencolor;
 
-
-      if (not memrec.isGroupHeader) and (memrec.VarType<>vtAutoAssembler) then
+      if memrec.Active then //draw a check
       begin
-        //draw the arrow up/down, unless it's a group or auto assembler type
-        if memrec.allowIncrease then
+        oldpencolor:=sender.canvas.pen.color;
+
+        if memrec.isSelected then
+          sender.canvas.pen.color:=checkboxActiveSelectedColor
+        else
+          sender.canvas.pen.color:=checkboxActiveColor;
+
+
+
+
+   {
+        //default: this is good
+        sender.canvas.Line(checkbox.left+1,checkbox.Top+1, checkbox.Right-1,checkbox.bottom-1);
+        sender.canvas.line(checkbox.left+1,checkbox.bottom-2, checkbox.right-1,checkbox.top);  }
+
+        sender.canvas.Line(checkbox.left,checkbox.Top, checkbox.Right-1,checkbox.bottom-1);
+        sender.canvas.line(checkbox.left,checkbox.bottom-1, checkbox.right-1,checkbox.top);
+
+        sender.canvas.pen.color:=oldpencolor;
+
+
+        if (not memrec.isGroupHeader) and (memrec.VarType<>vtAutoAssembler) then
         begin
-          sender.Canvas.Pen.Color:=increaseArrowColor; //clGreen
-          sender.canvas.line(checkbox.right+5, checkbox.bottom-1, checkbox.right+5,checkbox.top+1);
-          sender.canvas.line(checkbox.right+5,checkbox.top+1,checkbox.Right+5-4,checkbox.top+1+4);
-          sender.canvas.line(checkbox.right+5,checkbox.top+1,checkbox.Right+5+4,checkbox.top+1+4);
-          sender.canvas.pen.color:=oldpencolor;
+          //draw the arrow up/down, unless it's a group or auto assembler type
+          if memrec.allowIncrease then
+          begin
+            sender.Canvas.Pen.Color:=increaseArrowColor; //clGreen
+            sender.canvas.line(checkbox.right+5, checkbox.bottom-1, checkbox.right+5,checkbox.top+1);
+            sender.canvas.line(checkbox.right+5,checkbox.top+1,checkbox.Right+5-4,checkbox.top+1+4);
+            sender.canvas.line(checkbox.right+5,checkbox.top+1,checkbox.Right+5+4,checkbox.top+1+4);
+            sender.canvas.pen.color:=oldpencolor;
+          end;
+
+          if memrec.allowDecrease then
+          begin
+            sender.Canvas.Pen.Color:=decreaseArrowColor; //clRed;
+            sender.canvas.line(checkbox.right+5, checkbox.bottom-1, checkbox.right+5,checkbox.top+1);
+            sender.canvas.line(checkbox.right+5,checkbox.bottom-1,checkbox.Right+5-4,checkbox.bottom-1-4);
+            sender.canvas.line(checkbox.right+5,checkbox.bottom-1,checkbox.Right+5+4,checkbox.bottom-1-4);
+            sender.canvas.pen.color:=oldpencolor;
+          end;
         end;
 
-        if memrec.allowDecrease then
-        begin
-          sender.Canvas.Pen.Color:=decreaseArrowColor; //clRed;
-          sender.canvas.line(checkbox.right+5, checkbox.bottom-1, checkbox.right+5,checkbox.top+1);
-          sender.canvas.line(checkbox.right+5,checkbox.bottom-1,checkbox.Right+5-4,checkbox.bottom-1-4);
-          sender.canvas.line(checkbox.right+5,checkbox.bottom-1,checkbox.Right+5+4,checkbox.bottom-1-4);
-          sender.canvas.pen.color:=oldpencolor;
-        end;
       end;
 
-    end;
+      //draw the rectangle over the cross
+      if memrec.isSelected then
+        sender.canvas.pen.color:=checkboxSelectedColor
+      else
+        sender.canvas.pen.color:=checkboxColor;
 
+
+      sender.Canvas.Brush.Style:=bsClear;
+      sender.Canvas.Rectangle(checkbox);
+      sender.Canvas.Brush.Style:=bsSolid;
+
+    end
+    else
+    begin
+      //draw a clock
+      if memrec.isSelected then
+        sender.canvas.pen.color:=checkboxSelectedColor
+      else
+        sender.canvas.pen.color:=checkboxColor;
+
+      sender.Canvas.Ellipse(checkbox);
+
+      r:=(checkbox.right-checkbox.left) div 2;
+      cx:=trunc(checkbox.left+r);
+      cy:=trunc(checkbox.top+r);
+
+      t:=memrec.AsyncProcessingTime mod 1000; //every time t=0 the line should be up (value 0)
+      t:=trunc(t*0.36); //every second is a full rotation
+
+      x:=cx+cos(pi*(270+t mod 360)/180)*r*ifthen(memrec.Active,-1,1);
+      y:=cy+sin(pi*(270+t mod 360)/180)*r;
+
+      sender.Canvas.Line(cx,cy,trunc(x),trunc(y));
+
+
+      if memrec.isSelected then
+        sender.canvas.pen.color:=IncreaseArrowColor
+      else
+        sender.canvas.pen.color:=DecreaseArrowColor;
+
+      t:=(memrec.AsyncProcessingTime div 1000) mod 60; //every 60 seconds (t=0) the second handle should be up
+      t:=t*6;
+
+      x:=cx+cos(pi*(270+t mod 360)/180)*r*ifthen(memrec.Active,-1,1);
+      y:=cy+sin(pi*(270+t mod 360)/180)*r;
+
+      sender.Canvas.Line(cx,cy,trunc(x),trunc(y));
+
+
+      sender.canvas.pen.color:=oldpencolor;
+
+      if animationtimer=nil then
+      begin
+        animationtimer:=TTimer.Create(self);
+        animationtimer.interval:=16;
+        animationtimer.OnTimer:=DoAnimation;
+      end;
+
+      animationtimer.enabled:=true;
+    end;
     descriptionstart:=max(checkbox.right+10,header.Sections[1].Left);
 
 
@@ -1883,13 +2066,21 @@ begin
         //type
         case memrec.vartype of
           vtCustom: sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, memrec.CustomTypeName);
-          vtString: sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToString(memrec.VarType)+'['+inttostr(memrec.Extra.stringData.length)+']');
+          vtString:
+          begin
+            if not (memrec.Extra.stringData.unicode or memrec.Extra.stringData.codepage) then
+              sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToTranslatedString(memrec.VarType)+'['+inttostr(memrec.Extra.stringData.length)+']')
+            else if memrec.Extra.stringData.unicode then
+              sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToTranslatedString(vtUnicodeString)+'['+inttostr(memrec.Extra.stringData.length)+']')
+            else
+              sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToTranslatedString(vtCodePageString)+'['+inttostr(memrec.Extra.stringData.length)+']');
+          end;
           vtBinary:
           begin
             if memrec.Extra.bitData.bitlength=0 then
-              sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToString(memrec.VarType)+':'+inttostr(memrec.Extra.bitData.Bit)+'->idiot')
+              sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToTranslatedString(memrec.VarType)+':'+inttostr(memrec.Extra.bitData.Bit)+'->idiot')
             else
-              sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToString(memrec.VarType)+':'+inttostr(memrec.Extra.bitData.Bit)+'->'+inttostr(memrec.Extra.bitData.Bit+memrec.Extra.bitData.bitlength-1));
+              sender.Canvas.TextRect(rect(header.Sections[3].left, textrect.Top, header.Sections[3].right, textrect.bottom),header.sections[3].left, linetop, VariableTypeToTranslatedString(memrec.VarType)+':'+inttostr(memrec.Extra.bitData.Bit)+'->'+inttostr(memrec.Extra.bitData.Bit+memrec.Extra.bitData.bitlength-1));
           end
           else
           begin
@@ -2099,5 +2290,8 @@ begin
   symhandler.RemoveFinishedLoadingSymbolsNotification(SymbolsLoaded);
   inherited destroy;
 end;
+
+initialization
+  registerclass(TAddresslist);       //yes...
 
 end.

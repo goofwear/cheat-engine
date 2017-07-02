@@ -13,7 +13,7 @@ uses unixporthelper, Assemblerunit, classes, symbolhandler, sysutils,
 {$ifdef windows}
 uses jwawindows, windows, Assemblerunit, classes, LCLIntf,symbolhandler,
      sysutils,dialogs,controls, CEFuncProc, NewKernelHandler ,plugin,
-     ProcessHandlerUnit, lua, lualib, lauxlib, commonTypeDefs;
+     ProcessHandlerUnit, lua, lualib, lauxlib, luaclass, commonTypeDefs;
 {$endif}
 
 
@@ -22,7 +22,7 @@ uses jwawindows, windows, Assemblerunit, classes, LCLIntf,symbolhandler,
 function getenableanddisablepos(code:tstrings;var enablepos,disablepos: integer): boolean;
 function autoassemble(code: tstrings;popupmessages: boolean):boolean; overload;
 function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean):boolean; overload;
-function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil): boolean; overload;
+function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil; memrec: pointer=nil): boolean; overload;
 
 type TAutoAssemblerPrologue=procedure(code: TStrings; syntaxcheckonly: boolean) of object;
 type TAutoAssemblerCallback=function(parameters: string; syntaxcheckonly: boolean): string of object;
@@ -49,7 +49,7 @@ uses strutils, memscan, disassembler, networkInterface, networkInterfaceApi,
 {$ifdef windows}
 uses simpleaobscanner, StrUtils, LuaHandler, memscan, disassembler, networkInterface,
      networkInterfaceApi, LuaCaller, SynHighlighterAA, Parsers, Globals, memoryQuery,
-     MemoryBrowserFormUnit;
+     MemoryBrowserFormUnit, MemoryRecordUnit;
 {$endif}
 
 
@@ -178,7 +178,9 @@ begin
 
   if id<=length(prologues^) then
   begin
+    {$ifndef unix}
     CleanupLuaCall(TMethod(prologues^[id-1]));
+    {$endif}
     prologues^[id-1]:=nil;
   end;
 end;
@@ -769,7 +771,10 @@ var i,j,k, m: integer;
       for i:=0 to length(aobscanmodules[f].entries)-1 do
         aoblist:=aoblist+aobscanmodules[f].entries[i].name+' ';
 
-      errorstring:=rsAAErrorWhileSacnningForAobs+aoblist+#13#10#13#10+rsAAError+aobscanmodules[f].memscan.GetErrorString;
+      if aobscanmodules[f].memscan.GetErrorString<>'' then
+        errorstring:=rsAAErrorWhileSacnningForAobs+aoblist+#13#10#13#10+rsAAError+aobscanmodules[f].memscan.GetErrorString
+      else
+        errorstring:=rsAAErrorWhileSacnningForAobs+aoblist+#13#10#13#10+rsAAError+'Not all results found';
 
 
     end;
@@ -1030,7 +1035,7 @@ begin
 end;
 
 
-procedure luacode(code: TStrings; syntaxcheckonly: boolean);
+procedure luacode(code: TStrings; syntaxcheckonly: boolean; memrec: TMemoryRecord=nil);
 {
 Find and execute the LUA parts:
 function (syntaxcheck)
@@ -1045,6 +1050,7 @@ var
   stack: integer;
   str: string;
   error: boolean;
+  L: Plua_State;
 begin
   i:=0;
 
@@ -1063,7 +1069,8 @@ begin
         if (j=code.count) or (uppercase(TrimRight(code[j]))='{$ASM}') then
         begin
           s:=TStringList.create;
-          s.add('local syntaxcheck=...');
+
+          s.add('local syntaxcheck,memrec=...');
 
           code[i]:='';
           for k:=i+1 to j-1 do
@@ -1077,21 +1084,25 @@ begin
 
 
 {$ifndef NOLUA}
-          LUACS.Enter;
+          L:=GetLuaState;
+
+
           try
-            stack:=lua_Gettop(luavm);
+            stack:=lua_Gettop(L);
 
             error:=false;
 
-            luaL_loadstring(luavm, pchar(s.text));
-            if lua_isfunction(luavm, -1) then
+            luaL_loadstring(L, pchar(s.text));
+            if lua_isfunction(L, -1) then
             begin
-              lua_pushboolean(luavm, syntaxcheckonly);
-              if lua.lua_pcall(luavm, 1, 1, 0)=0 then
+              lua_pushboolean(L, syntaxcheckonly);
+              luaclass_newClass(L, memrec);
+
+              if lua.lua_pcall(L, 2, 1, 0)=0 then
               begin
-                if lua_isstring(luavm,-1) then
+                if lua_isstring(L,-1) then
                 begin
-                  str:=Lua_ToString(luavm, -1);
+                  str:=Lua_ToString(L, -1);
                   s:=tstringlist.create;
                   s.text:=str;
 
@@ -1110,16 +1121,15 @@ begin
 
             if error then
             begin
-              if lua_isstring(luavm, -1) then
-                raise exception.create(rsAALuaErrorInTheScriptAtLine+inttostr(integer(code.Objects[i]))+':'+lua_tostring(luavm, -1))
+              if lua_isstring(L, -1) then
+                raise exception.create(rsAALuaErrorInTheScriptAtLine+inttostr(integer(code.Objects[i]))+':'+lua_tostring(L, -1))
               else
                 raise exception.create(rsAALuaErrorInTheScriptAtLine+inttostr(integer(code.Objects[i])));
 
             end;
 
           finally
-            lua_settop(Luavm, stack);
-            LUACS.Leave;
+            lua_settop(L, stack);
           end;
 {$endif}
           break;
@@ -1144,7 +1154,7 @@ end;
 
 var nextaaid: longint;
 
-function autoassemble2(code: tstrings;popupmessages: boolean;syntaxcheckonly:boolean; targetself: boolean ;var ceallocarray:TCEAllocArray; registeredsymbols: tstringlist=nil):boolean;
+function autoassemble2(code: tstrings;popupmessages: boolean;syntaxcheckonly:boolean; targetself: boolean ;var ceallocarray:TCEAllocArray; registeredsymbols: tstringlist=nil; memrec: TMemoryRecord=nil):boolean;
 {
 registeredsymbols is a stringlist that is initialized by the caller as case insensitive and no duplicates
 }
@@ -1327,7 +1337,7 @@ begin
         if assigned(AutoAssemblerPrologues[i]) then
           AutoAssemblerPrologues[i](code, syntaxcheckonly);
 
-    luacode(code, syntaxcheckonly);
+    luacode(code, syntaxcheckonly, memrec);
 
     strictmode:=false;
     for i:=0 to code.count-1 do
@@ -2925,7 +2935,7 @@ begin
             begin
               try
                 symhandler.DeleteUserdefinedSymbol(addsymbollist[i]); //delete old one so you can add the new one
-                symhandler.AddUserdefinedSymbol(inttohex(labels[j].address,8),addsymbollist[i]);
+                symhandler.AddUserdefinedSymbol(inttohex(labels[j].address,8),addsymbollist[i], true);
                 ok1:=true;
               except
                 //don't crash when it's already defined or address=0
@@ -2939,7 +2949,7 @@ begin
             begin
               try
                 symhandler.DeleteUserdefinedSymbol(addsymbollist[i]); //delete old one so you can add the new one
-                symhandler.AddUserdefinedSymbol(defines[j].whatever, addsymbollist[i]);
+                symhandler.AddUserdefinedSymbol(defines[j].whatever, addsymbollist[i], true);
                 ok1:=true;
               except
               end;
@@ -3046,6 +3056,7 @@ begin
         begin
           if MessageDlg(rsTheCodeInjectionWasSuccessfull+s1+#13#10+rsGoTo+inttohex(testptr,8)+'?', mtInformation,[mbYes, mbNo], 0, mbno)=mrYes then
           begin
+            memorybrowser.backlist.Push(pointer(memorybrowser.disassemblerview.SelectedAddress));
             memorybrowser.disassemblerview.selectedaddress:=testptr;
             memorybrowser.show;
           end;
@@ -3229,7 +3240,7 @@ begin
   end;
 end;
 
-function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil): boolean; overload;
+function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil; memrec:pointer=nil): boolean; overload;
 {
 targetself defines if the process that gets injected to is CE itself or the target process
 }
@@ -3294,7 +3305,7 @@ begin
     if targetself then
       Stripcpuspecificcode(tempstrings);
 
-    result:=autoassemble2(tempstrings,popupmessages,syntaxcheckonly,targetself,ceallocarray, registeredsymbols);
+    result:=autoassemble2(tempstrings,popupmessages,syntaxcheckonly,targetself,ceallocarray, registeredsymbols, memrec);
   finally
     tempstrings.Free;
   end;

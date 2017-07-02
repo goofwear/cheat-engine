@@ -73,6 +73,13 @@ type TDisassemblerview=class(TPanel)
     fOnSelectionChange: TDisassemblerSelectionChangeEvent;
     fOnExtraLineRender: TDisassemblerExtraLineRender;
 
+    fspaceAboveLines: integer;
+    fspaceBelowLines: integer;
+    fjlThickness: integer;
+    fjlSpacing: integer;
+
+    fhidefocusrect: boolean;
+
     scrolltimer: ttimer;
     procedure updateScrollbox;
     procedure scrollboxResize(Sender: TObject);
@@ -118,6 +125,12 @@ type TDisassemblerview=class(TPanel)
 
   public
     colors: TDisassemblerViewColors;
+    jlCallColor: TColor;
+    jlConditionalJumpColor: TColor;
+    jlUnConditionalJumpColor: TColor;
+
+    LastFormActiveEvent: qword;
+
 
     procedure reinitialize; //deletes the assemblerlines
 
@@ -140,6 +153,11 @@ type TDisassemblerview=class(TPanel)
     constructor create(AOwner: TComponent); override;
     destructor destroy; override;
   published
+    property HideFocusRect: boolean read fhidefocusrect write fhidefocusrect;
+    property SpaceAboveLines: integer read fspaceAboveLines write fspaceAboveLines;
+    property SpaceBelowLines: integer read fspaceBelowLines write fspaceBelowLines;
+    property jlThickness: integer read fjlThickness write fjlThickness;
+    property jlSpacing: integer read fjlSpacing write fjlSpacing;
     property ShowJumplines: boolean read fShowJumplines write setJumpLines;
     property ShowJumplineState: TShowJumplineState read fShowjumplinestate write setJumplineState;
     property TopAddress: ptrUint read fTopAddress write setTopAddress;
@@ -466,7 +484,7 @@ procedure TDisassemblerview.DoAutoSize;
 begin
   DisableAutoSizing;
   disassembleDescription.ClientHeight:=disassembleDescription.Canvas.TextHeight('GgXxYj')+4;
-  header.Height:=header.Canvas.TextHeight('GgXxyJjlL')+4;
+  header.Height:=Canvas.TextHeight('GgXxyJjlL')+4;
 
   disassembleDescription.Font.Height:=GetFontData(font.Handle).Height;
 
@@ -475,9 +493,18 @@ begin
 end;
 
 procedure TDisassemblerview.DisCanvasMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+var timepassed: qword;
 begin
-  if ssLeft in shift then
-    DisCanvas.OnMouseDown(self,mbleft,shift,x,y);
+  timepassed:=gettickcount64-LastFormActiveEvent;
+  if timepassed>=50 then
+  begin
+    if ssLeft in shift then
+      DisCanvas.OnMouseDown(self,mbleft,shift,x,y);
+  end
+  else
+  begin
+    //outputdebugstring('skipped due to '+inttostr(timepassed)+' milliseconds');
+  end;
 end;
 
 procedure TDisassemblerview.DisCanvasMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -541,9 +568,13 @@ var
   address: ptrUint;
 
   found: boolean;
+  trianglesize: integer;
   jumplineoffset: integer;
 begin
-  jumplineoffset:=4;
+  if fTotalvisibledisassemblerlines=0 then exit;
+
+  trianglesize:=TDisassemblerLine(disassemblerlines[0]).defaultHeight div 4;
+  jumplineoffset:=trianglesize;
 
   found:=false;
 
@@ -588,7 +619,7 @@ begin
         end;
       end;
 
-      inc(jumplineoffset,2);
+      inc(jumplineoffset,jlSpacing);
     end;
   end;
 end;
@@ -709,7 +740,7 @@ begin
       currentline:=disassemblerlines[i];
 
 
-      currentline.renderLine(currentAddress,currenttop, inrangeX(currentAddress,selStart,selStop), currentAddress=fSelectedAddress);
+      currentline.renderLine(currentAddress,currenttop, inrangeX(currentAddress,selStart,selStop), currentAddress=fSelectedAddress, fspaceAboveLines, fSpaceBelowLines);
 
       inc(currenttop, currentline.getHeight);
       inc(i);
@@ -933,6 +964,9 @@ begin
 
           dl:=TDisassemblerLine(disassemblerlines[0]);
           inc(fTopSubline, dl.height);
+          if fTopSubline<0 then
+            fTopSubline:=0;
+
         end;
       end;
     end;
@@ -1061,6 +1095,9 @@ constructor TDisassemblerview.create(AOwner: TComponent);
 var emptymenu: TPopupMenu;
 begin
   inherited create(AOwner);
+
+  jlSpacing:=2;
+  jlThickness:=1;
 
   emptymenu:=TPopupMenu.create(self);
 
@@ -1244,6 +1281,8 @@ begin
   self.OnMouseWheel:=mousescroll;
 
 
+
+
   getDefaultColors(colors);
 
 
@@ -1309,6 +1348,10 @@ begin
   c[csSecondaryHighlightedUltimap].registercolor:=clRed;
   c[csSecondaryHighlightedUltimap].symbolcolor:=clLime;
   c[csSecondaryHighlightedUltimap].hexcolor:=clBlue;
+
+  jlConditionalJumpColor:=clRed;
+  jlUnconditionalJumpColor:=clGreen;
+  jlCallColor:=clYellow;
 end;
 
 

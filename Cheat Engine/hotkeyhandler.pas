@@ -52,6 +52,8 @@ procedure SuspendHotkeyHandler;
 procedure ResumeHotkeyHandler;
 procedure hotkeyTargetWindowHandleChanged(oldhandle, newhandle: thandle);
 
+function IsKeyPressed(key: integer):boolean;
+
 
 var hotkeythread: THotkeythread;
     CSKeys: TCriticalSection;
@@ -96,7 +98,7 @@ begin
           VK_PAD_LSHOULDER: exit((ControllerState.Gamepad.wButtons and XINPUT_GAMEPAD_LEFT_SHOULDER)>0);
 
           VK_PAD_LTRIGGER: exit(ControllerState.Gamepad.bLeftTrigger>40);
-          VK_PAD_RTRIGGER: exit(ControllerState.Gamepad.bLeftTrigger>40);
+          VK_PAD_RTRIGGER: exit(ControllerState.Gamepad.bRightTrigger>40);
 
           VK_PAD_DPAD_UP: exit((ControllerState.Gamepad.wButtons and XINPUT_GAMEPAD_DPAD_UP)>0);
           VK_PAD_DPAD_DOWN: exit((ControllerState.Gamepad.wButtons and XINPUT_GAMEPAD_DPAD_DOWN)>0);

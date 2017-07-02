@@ -4,7 +4,6 @@ object frmTrainerGenerator: TfrmTrainerGenerator
   Top = 152
   Width = 778
   AutoSize = True
-  BorderIcons = [biSystemMenu, biMaximize]
   Caption = 'Trainer generator'
   ClientHeight = 412
   ClientWidth = 778
@@ -13,6 +12,7 @@ object frmTrainerGenerator: TfrmTrainerGenerator
   OnClose = FormClose
   OnCreate = FormCreate
   OnShow = FormShow
+  PopupMode = pmAuto
   Position = poScreenCenter
   LCLVersion = '1.6.0.4'
   object Panel2: TPanel

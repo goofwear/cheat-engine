@@ -11,7 +11,7 @@ object frmDissectCode: TfrmDissectCode
   OnCreate = FormCreate
   OnShow = FormShow
   Position = poScreenCenter
-  LCLVersion = '1.6.0.4'
+  LCLVersion = '1.6.4.0'
   object ProgressBar1: TProgressBar
     Left = 0
     Height = 21
